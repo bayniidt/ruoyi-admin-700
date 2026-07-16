@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.AgentClientMapper">
+    <resultMap id="AgentClientResult" type="AgentClient">
+        <id property="agentId" column="agent_id" />
+        <result property="ownerUserId" column="owner_user_id" />
+        <result property="sysUserId" column="sys_user_id" />
+        <result property="userName" column="user_name" />
+        <result property="passwordHash" column="password_hash" />
+        <result property="nickName" column="nick_name" />
+        <result property="phonenumber" column="phonenumber" />
+        <result property="email" column="email" />
+        <result property="commissionRate" column="commission_rate" />
+        <result property="partnerCustomerKey" column="partner_customer_key" />
+        <result property="apiKey" column="api_key" />
+        <result property="apiSecretHash" column="api_secret_hash" />
+        <result property="status" column="status" />
+        <result property="usageCount" column="usage_count" />
+        <result property="dataCount" column="data_count" />
+        <result property="totalSpend" column="total_spend" />
+        <result property="lastReportTime" column="last_report_time" />
+        <result property="remark" column="remark" />
+        <result property="createBy" column="create_by" />
+        <result property="createTime" column="create_time" />
+    </resultMap>
+
+    <select id="selectAgentList" resultMap="AgentClientResult">
+        select a.agent_id, a.owner_user_id, a.sys_user_id, a.user_name, a.nick_name, a.phonenumber, a.email,
+               a.commission_rate, a.partner_customer_key, a.api_key, a.status, a.remark, a.create_by, a.create_time,
+               count(u.usage_id) as usage_count,
+               coalesce(sum(u.data_count), 0) as data_count,
+               coalesce(sum(u.spend), 0) as total_spend,
+               max(u.reported_at) as last_report_time
+        from agent_client a
+        left join agent_usage u on u.agent_id = a.agent_id
+        <where>
+            <if test="ownerUserId != null">(a.owner_user_id = #{ownerUserId} or a.sys_user_id = #{ownerUserId})</if>
+            <if test="keyword != null and keyword != ''">
+                and (a.user_name like concat('%', #{keyword}, '%') or a.nick_name like concat('%', #{keyword}, '%'))
+            </if>
+        </where>
+        group by a.agent_id
+        order by a.agent_id desc
+    </select>
+
+    <select id="selectAgentByApiKey" parameterType="String" resultMap="AgentClientResult">
+        select agent_id, owner_user_id, sys_user_id, user_name, password_hash, nick_name, phonenumber, email,
+               commission_rate, partner_customer_key, api_key, api_secret_hash, status, remark, create_by, create_time
+        from agent_client where api_key = #{apiKey} limit 1
+    </select>
+
+    <select id="selectAgentBySysUserId" parameterType="Long" resultMap="AgentClientResult">
+        select agent_id, owner_user_id, sys_user_id, user_name, password_hash, nick_name, phonenumber, email,
+               commission_rate, partner_customer_key, api_key, api_secret_hash, status, remark, create_by, create_time
+        from agent_client where sys_user_id = #{sysUserId} limit 1
+    </select>
+
+    <select id="selectAgentRoleId" resultType="Long">
+        select role_id from sys_role where role_key = 'agent' and status = '0' limit 1
+    </select>
+
+    <select id="countByOwnerAndUserName" resultType="int">
+        select count(1) from agent_client where owner_user_id = #{ownerUserId} and user_name = #{userName}
+    </select>
+
+    <insert id="insertAgent" parameterType="AgentClient" useGeneratedKeys="true" keyProperty="agentId">
+        insert into agent_client(owner_user_id, sys_user_id, user_name, password_hash, nick_name, phonenumber, email,
+            commission_rate, partner_customer_key, api_key, api_secret_hash, status, remark, create_by, create_time)
+        values(#{ownerUserId}, #{sysUserId}, #{userName}, #{passwordHash}, #{nickName}, #{phonenumber}, #{email},
+            #{commissionRate}, #{partnerCustomerKey}, #{apiKey}, #{apiSecretHash}, #{status}, #{remark}, #{createBy}, sysdate())
+    </insert>
+
+    <update id="updateSecret">
+        update agent_client set api_secret_hash = #{apiSecretHash}, update_time = sysdate()
+        where agent_id = #{agentId} and owner_user_id = #{ownerUserId}
+    </update>
+
+    <insert id="insertUsage" parameterType="AgentUsage">
+        insert ignore into agent_usage(agent_id, request_id, metric, data_count, spend, currency,
+            customer_key, reported_at, remark, create_time)
+        values(#{agentId}, #{requestId}, #{metric}, #{dataCount}, #{spend}, #{currency},
+            #{customerKey}, #{reportedAt}, #{remark}, sysdate())
+    </insert>
+</mapper>

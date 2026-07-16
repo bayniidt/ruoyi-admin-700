@@ -157,7 +157,8 @@ export default {
       if (!data) {
         return []
       }
-      return data.data || data.items || data.results || []
+      const content = data.data || data
+      return Array.isArray(content) ? content : (content.items || content.results || [])
     },
     normalizeStatus(archived) {
       return archived ? 'disabled' : 'active'
