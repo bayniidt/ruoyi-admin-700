@@ -36,10 +36,20 @@
     </el-card>
 
     <el-card shadow="never" class="table-card">
-      <el-table :data="filteredList" border>
+      <el-table :data="filteredList" border v-loading="loading">
         <el-table-column prop="accountId" label="广告户ID" min-width="180" />
+        <el-table-column prop="transactionAmountUsd" label="交易金额(USD)" min-width="130" align="right">
+          <template slot-scope="scope">
+            <span>${{ scope.row.transactionAmountUsd }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="subId" label="SubId" min-width="120" />
-        <el-table-column prop="countryCode" label="国家代码" min-width="110" align="center" />
+        <el-table-column prop="companyName" label="公司名称" min-width="180" />
+        <el-table-column prop="customerKey" label="客户编号" min-width="180" />
+        <el-table-column prop="partnershipKey" label="合作关系Key" min-width="180" />
+        <el-table-column prop="productKey" label="产品Key" min-width="140" />
+        <el-table-column prop="categoryKey" label="分类Key" min-width="140" />
+        <el-table-column prop="currency" label="币种" min-width="90" align="center" />
         <el-table-column prop="statusLabel" label="状态" min-width="110" align="center">
           <template slot-scope="scope">
             <el-tag :type="scope.row.statusType" size="small">{{ scope.row.statusLabel }}</el-tag>
@@ -58,43 +68,9 @@
 </template>
 
 <script>
-const defaultRange = ['2026-06-16 15:19:58', '2026-07-16 15:19:58']
+import { getPartnerStackTransactions } from '@/api/partnerstack'
 
-const mockAccounts = [
-  {
-    accountId: 'act_9052101871',
-    subId: 'MY',
-    countryCode: 'US',
-    status: 'active',
-    statusLabel: '正常',
-    statusType: 'success',
-    spend: '245.80',
-    updateTime: '2026-07-15 22:18:33',
-    createTime: '2026-07-02 13:10:26'
-  },
-  {
-    accountId: 'act_9052101872',
-    subId: '12344',
-    countryCode: 'GB',
-    status: 'pending',
-    statusLabel: '审核中',
-    statusType: 'warning',
-    spend: '0.00',
-    updateTime: '2026-07-14 09:46:51',
-    createTime: '2026-07-10 18:02:14'
-  },
-  {
-    accountId: 'act_9052101873',
-    subId: 'MY_2026',
-    countryCode: 'CA',
-    status: 'disabled',
-    statusLabel: '已停用',
-    statusType: 'info',
-    spend: '18.50',
-    updateTime: '2026-07-13 11:27:08',
-    createTime: '2026-06-29 08:21:40'
-  }
-]
+const defaultRange = ['2026-06-16 15:19:58', '2026-07-16 15:19:58']
 
 export default {
   name: 'AdAccountManage',
@@ -107,13 +83,14 @@ export default {
         status: '',
         minSpend: 0
       },
-      subIdOptions: ['MY', '12344', 'MY_2026'],
+      loading: false,
+      subIdOptions: [],
       statusOptions: [
         { label: '正常', value: 'active' },
         { label: '审核中', value: 'pending' },
         { label: '已停用', value: 'disabled' }
       ],
-      accountList: mockAccounts
+      accountList: []
     }
   },
   computed: {
@@ -127,9 +104,89 @@ export default {
       })
     }
   },
+  created() {
+    this.fetchTransactions()
+  },
   methods: {
+    async fetchTransactions() {
+      this.loading = true
+      try {
+        const { data } = await getPartnerStackTransactions({
+          ...this.buildRangeParams(),
+          limit: 100
+        })
+        const list = this.extractItems(data)
+        this.accountList = list.map((item, index) => {
+          const amount = Number(item.amount || item.net_amount || 0) / 100
+          const status = this.normalizeStatus(item.archived)
+          return {
+            accountId: item.key || item.invoice_key || `tran_${index + 1}`,
+            transactionAmountUsd: (Number(item.amount_usd || item.amount || 0) / 100).toFixed(2),
+            subId: (item.customer?.sub_ids || [])[0] || '-',
+            companyName: item.company?.name || '-',
+            customerKey: item.customer?.key || '-',
+            partnershipKey: item.partnership_key || '-',
+            productKey: item.product_key || '-',
+            categoryKey: item.category_key || '-',
+            currency: item.currency || 'USD',
+            status,
+            statusLabel: this.toStatusLabel(status),
+            statusType: this.toStatusType(status),
+            spend: amount.toFixed(2),
+            updateTime: this.formatTime(item.updated_at || item.created_at),
+            createTime: this.formatTime(item.created_at)
+          }
+        })
+      this.subIdOptions = [...new Set(this.accountList.map(item => item.subId).filter(Boolean))]
+      } finally {
+        this.loading = false
+      }
+    },
+    buildRangeParams() {
+      const [start, end] = this.filters.dateRange || []
+      const params = {}
+      if (start) {
+        params.minCreated = new Date(start).getTime()
+      }
+      if (end) {
+        params.maxCreated = new Date(end).getTime()
+      }
+      return params
+    },
+    extractItems(data) {
+      if (!data) {
+        return []
+      }
+      return data.data || data.items || data.results || []
+    },
+    normalizeStatus(archived) {
+      return archived ? 'disabled' : 'active'
+    },
+    toStatusLabel(status) {
+      return {
+        active: '正常',
+        disabled: '已停用'
+      }[status] || '正常'
+    },
+    toStatusType(status) {
+      return {
+        active: 'success',
+        disabled: 'info'
+      }[status] || 'info'
+    },
+    formatTime(value) {
+      if (!value) {
+        return '-'
+      }
+      const date = new Date(Number(value))
+      if (Number.isNaN(date.getTime())) {
+        return '-'
+      }
+      const pad = num => `${num}`.padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    },
     handleSearch() {
-      this.$message.success('已按 mock 条件完成搜索')
+      this.fetchTransactions()
     },
     handleReset() {
       this.filters = {
@@ -139,7 +196,7 @@ export default {
         status: '',
         minSpend: 0
       }
-      this.$message.success('筛选条件已重置')
+      this.fetchTransactions()
     }
   }
 }

@@ -11,6 +11,50 @@
         </div>
       </div>
 
+      <section class="summary-grid">
+        <div class="summary-item">
+          <span>奖励笔数</span>
+          <strong>{{ rewardSummary.count }}</strong>
+        </div>
+        <div class="summary-item">
+          <span>待发佣金</span>
+          <strong>¥{{ rewardSummary.pendingAmount }}</strong>
+        </div>
+        <div class="summary-item">
+          <span>已发佣金</span>
+          <strong>¥{{ rewardSummary.paidAmount }}</strong>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <i></i>
+          <h2>奖励明细</h2>
+        </div>
+
+        <el-table :data="rewardList" border class="tier-table">
+          <el-table-column prop="rewardKey" label="奖励Key" min-width="180" />
+          <el-table-column prop="companyName" label="公司名称" min-width="180" />
+          <el-table-column prop="customerKey" label="客户编号" min-width="180" />
+          <el-table-column prop="sourceTypeLabel" label="奖励来源" min-width="120" align="center" />
+          <el-table-column prop="sourceKey" label="来源单号" min-width="180" />
+          <el-table-column prop="rewardStatusLabel" label="奖励状态" min-width="120" align="center">
+            <template slot-scope="scope">
+              <el-tag :type="scope.row.rewardStatusType" size="small">{{ scope.row.rewardStatusLabel }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="paymentStatusLabel" label="付款状态" min-width="120" align="center" />
+          <el-table-column prop="paymentDate" label="预计付款时间" min-width="180" align="center" />
+          <el-table-column prop="amount" label="奖励金额" min-width="120" align="right">
+            <template slot-scope="scope">
+              <span>{{ scope.row.currencySymbol }}{{ scope.row.amount }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="description" label="奖励说明" min-width="360" show-overflow-tooltip />
+          <el-table-column prop="createdAt" label="创建时间" min-width="180" align="center" />
+        </el-table>
+      </section>
+
       <section class="section">
         <div class="section-heading">
           <i></i>
@@ -57,10 +101,18 @@
 </template>
 
 <script>
+import { getPartnerStackRewards } from '@/api/partnerstack'
+
 export default {
   name: 'IncentivePlan',
   data() {
     return {
+      rewardSummary: {
+        count: 0,
+        pendingAmount: '0.00',
+        paidAmount: '0.00'
+      },
+      rewardList: [],
       tierList: [
         { level: 'T1', spendRange: 'X ≥ 3万', reward: '2,000' },
         { level: 'T2', spendRange: 'X ≥ 10万', reward: '10,000' },
@@ -92,6 +144,109 @@ export default {
         }
       ]
     }
+  },
+  created() {
+    this.fetchRewards()
+  },
+  methods: {
+    async fetchRewards() {
+      const { data } = await getPartnerStackRewards({ limit: 100 })
+      const list = this.extractItems(data)
+      this.rewardList = list.map(item => ({
+        rewardKey: item.key || '-',
+        companyName: item.company?.name || '-',
+        customerKey: item.customer?.key || '-',
+        sourceTypeLabel: this.toSourceTypeLabel(item.source?.type),
+        sourceKey: item.source?.key || '-',
+        rewardStatusLabel: this.toRewardStatusLabel(item.reward_status),
+        rewardStatusType: this.toRewardStatusType(item.reward_status),
+        paymentStatusLabel: this.toPaymentStatusLabel(item.payment_status, item.withdrawn),
+        paymentDate: this.formatTime(item.payment_date),
+        amount: (Number(item.amount || 0) / 100).toFixed(2),
+        currencySymbol: this.toCurrencySymbol(item.currency),
+        description: item.description || '-',
+        createdAt: this.formatTime(item.created_at)
+      }))
+      const summary = list.reduce((acc, item) => {
+        const amount = Number(item.amount || 0) / 100
+        const paymentStatus = String(item.payment_status || item.reward_status || '').toLowerCase()
+        acc.count += 1
+        if (['available', 'in_transit', 'merging', 'pending', 'approved'].includes(paymentStatus)) {
+          acc.pendingAmount += amount
+        }
+        if (['withdrawn', 'paid_externally', 'paid'].includes(paymentStatus) || item.withdrawn) {
+          acc.paidAmount += amount
+        }
+        return acc
+      }, {
+        count: 0,
+        pendingAmount: 0,
+        paidAmount: 0
+      })
+      this.rewardSummary = {
+        count: summary.count,
+        pendingAmount: summary.pendingAmount.toFixed(2),
+        paidAmount: summary.paidAmount.toFixed(2)
+      }
+    },
+    extractItems(data) {
+      if (!data) {
+        return []
+      }
+      return data.data || data.items || data.results || []
+    },
+    toSourceTypeLabel(type) {
+      return {
+        transaction: '交易返佣',
+        action: '动作奖励'
+      }[type] || (type || '-')
+    },
+    toRewardStatusLabel(status) {
+      return {
+        pending: '待审核',
+        approved: '已通过',
+        declined: '已拒绝',
+        paid: '已支付'
+      }[status] || (status || '-')
+    },
+    toRewardStatusType(status) {
+      return {
+        pending: 'warning',
+        approved: 'success',
+        declined: 'danger',
+        paid: 'info'
+      }[status] || 'info'
+    },
+    toPaymentStatusLabel(status, withdrawn) {
+      if (withdrawn) {
+        return '已打款'
+      }
+      return {
+        available: '可结算',
+        in_transit: '打款中',
+        withdrawn: '已提现',
+        paid_externally: '外部支付',
+        expired: '已过期',
+        failed: '失败',
+        merging: '合并中',
+        pending: '待支付',
+        approved: '已审批'
+      }[status] || (status || '-')
+    },
+    toCurrencySymbol(currency) {
+      return currency === 'USD' ? '$' : currency === 'CNY' ? '¥' : `${currency || ''} `
+    },
+    formatTime(value) {
+      if (!value) {
+        return '-'
+      }
+      const date = new Date(Number(value))
+      if (Number.isNaN(date.getTime())) {
+        return '-'
+      }
+      const pad = num => `${num}`.padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    }
   }
 }
 </script>
@@ -108,6 +263,31 @@ export default {
 
 .hero {
   margin-bottom: 34px;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.summary-item {
+  padding: 18px 20px;
+  border-radius: 14px;
+  background: #f7f9fc;
+
+  span {
+    display: block;
+    color: #8a93ab;
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+
+  strong {
+    color: #1f2433;
+    font-size: 24px;
+  }
 }
 
 .hero-title {

@@ -11,8 +11,10 @@
             <el-button type="primary" icon="el-icon-plus" @click="openDialog">申请 SubId</el-button>
           </div>
 
-          <el-table :data="mySubIds" border>
+          <el-table :data="mySubIds" border v-loading="loading">
             <el-table-column prop="subId" label="SUBID" min-width="120" />
+            <el-table-column prop="companyName" label="公司名称" min-width="180" />
+            <el-table-column prop="partnerCustomerKey" label="PartnerStack客户Key" min-width="180" />
             <el-table-column label="推广链接" min-width="420">
               <template slot-scope="scope">
                 <div class="link-cell">
@@ -21,7 +23,19 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column prop="owner" label="拥有者" min-width="120" />
+            <el-table-column prop="owner" label="客户编号" min-width="160" />
+            <el-table-column prop="sharedId" label="共享ID" min-width="140" />
+            <el-table-column prop="countryName" label="国家/地区" min-width="120" />
+            <el-table-column prop="paidLabel" label="付费状态" min-width="100" align="center">
+              <template slot-scope="scope">
+                <el-tag :type="scope.row.paidType" size="small">{{ scope.row.paidLabel }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="archiveLabel" label="归档状态" min-width="100" align="center">
+              <template slot-scope="scope">
+                <el-tag :type="scope.row.archiveType" size="small">{{ scope.row.archiveLabel }}</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="bindTime" label="绑定时间" min-width="180" />
           </el-table>
         </el-tab-pane>
@@ -34,7 +48,7 @@
             </div>
           </div>
 
-          <el-table :data="downlineSubIds" border empty-text="暂无数据">
+          <el-table :data="downlineSubIds" border empty-text="暂无数据" v-loading="loading">
             <el-table-column prop="subId" label="SUBID" min-width="120" />
             <el-table-column label="推广链接" min-width="420">
               <template slot-scope="scope">
@@ -44,7 +58,9 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column prop="source" label="来源" min-width="120" />
+            <el-table-column prop="source" label="公司名称" min-width="160" />
+            <el-table-column prop="partnerCustomerKey" label="PartnerStack客户Key" min-width="180" />
+            <el-table-column prop="countryName" label="国家/地区" min-width="120" />
             <el-table-column prop="bindTime" label="绑定时间" min-width="180" />
           </el-table>
         </el-tab-pane>
@@ -72,6 +88,8 @@
 </template>
 
 <script>
+import { getPartnerStackCustomers } from '@/api/partnerstack'
+
 const baseLink = 'https://getstartedtiktok.partnerlinks.io/k0p71lz923ri'
 
 function createForm() {
@@ -85,22 +103,10 @@ export default {
   data() {
     return {
       activeTab: 'mine',
+      loading: false,
       open: false,
       form: createForm(),
-      mySubIds: [
-        {
-          subId: 'MY',
-          promoLink: `${baseLink}?sid=MY`,
-          owner: 'MY',
-          bindTime: '2026-07-13 10:49:27'
-        },
-        {
-          subId: '12344',
-          promoLink: `${baseLink}?sid=12344`,
-          owner: 'MY',
-          bindTime: '2026-07-13 10:56:54'
-        }
-      ],
+      mySubIds: [],
       downlineSubIds: [],
       rules: {
         subId: [
@@ -111,7 +117,48 @@ export default {
       }
     }
   },
+  created() {
+    this.fetchCustomers()
+  },
   methods: {
+    async fetchCustomers() {
+      this.loading = true
+      try {
+        const { data } = await getPartnerStackCustomers({ limit: 100 })
+        const list = this.extractItems(data)
+        this.mySubIds = list.map((item, index) => this.toSubIdRow(item, index))
+        this.downlineSubIds = list.slice(0, 20).map((item, index) => ({
+          ...this.toSubIdRow(item, index),
+          source: item.name || item.customer_name || 'PartnerStack Customer'
+        }))
+      } finally {
+        this.loading = false
+      }
+    },
+    toSubIdRow(item, index) {
+      const customerKey = item.key || item.customer_key || `cus_${index + 1}`
+      const subId = customerKey.replace(/^cus_/i, '').slice(0, 12) || `SID${index + 1}`
+      return {
+        subId,
+        promoLink: `${baseLink}?sid=${subId}`,
+        companyName: item.company?.name || '-',
+        partnerCustomerKey: item.key || '-',
+        owner: item.customer_key || item.shared_id || item.key || '未知客户',
+        sharedId: item.shared_id || '-',
+        countryName: this.toCountryName(item.country_iso),
+        paidLabel: item.has_paid ? '已付费' : '未付费',
+        paidType: item.has_paid ? 'success' : 'info',
+        archiveLabel: item.archived ? '已归档' : '生效中',
+        archiveType: item.archived ? 'info' : 'success',
+        bindTime: this.formatTime(item.created_at || item.createdAt)
+      }
+    },
+    extractItems(data) {
+      if (!data) {
+        return []
+      }
+      return data.data || data.items || data.results || []
+    },
     openDialog() {
       this.form = createForm()
       this.open = true
@@ -133,14 +180,21 @@ export default {
           this.$message.error('该 SubId 已存在')
           return
         }
-        this.mySubIds.push({
+        this.mySubIds.unshift({
           subId: this.form.subId,
           promoLink: `${baseLink}?sid=${this.form.subId}`,
-          owner: 'MY',
+          partnerCustomerKey: '-',
+          owner: 'Manual',
+          sharedId: '-',
+          countryName: '-',
+          paidLabel: '未付费',
+          paidType: 'info',
+          archiveLabel: '生效中',
+          archiveType: 'success',
           bindTime: this.parseCurrentTime()
         })
         this.open = false
-        this.$message.success('SubId 申请成功（Mock）')
+        this.$message.success('SubId 已加入当前列表')
       })
     },
     copyText(text) {
@@ -170,6 +224,28 @@ export default {
       const now = new Date()
       const pad = value => `${value}`.padStart(2, '0')
       return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+    },
+    formatTime(value) {
+      if (!value) {
+        return '-'
+      }
+      const date = new Date(Number(value))
+      if (Number.isNaN(date.getTime())) {
+        return '-'
+      }
+      const pad = num => `${num}`.padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    },
+    toCountryName(code) {
+      const map = {
+        US: '美国',
+        PH: '菲律宾',
+        TH: '泰国',
+        HK: '中国香港',
+        GB: '英国',
+        CA: '加拿大'
+      }
+      return map[code] || code || '-'
     }
   }
 }
