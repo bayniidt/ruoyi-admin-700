@@ -251,6 +251,7 @@ public class PartnerStackController extends BaseController
             @RequestParam(required = false) Long maxCreated,
             @RequestParam(required = false) String subId,
             @RequestParam(required = false) String customerKey,
+            @RequestParam(required = false) String status,
             @RequestParam(required = false, defaultValue = "0") BigDecimal minAmountSUM,
             @RequestParam(required = false, defaultValue = "1") Integer pageNum,
             @RequestParam(required = false, defaultValue = "10") Integer pageSize)
@@ -266,7 +267,6 @@ public class PartnerStackController extends BaseController
             Scope scope = access.scope();
             int safePageNum = pageNum == null || pageNum < 1 ? 1 : pageNum;
             int safePageSize = pageSize == null || pageSize < 1 ? 10 : Math.min(pageSize, 100);
-            int fetchLimit = Math.min(safePageNum * safePageSize, PARTNERSTACK_PAGE_SIZE);
             JSONArray customerSource;
             if (scope.requiresCustomerResolution())
             {
@@ -275,14 +275,8 @@ public class PartnerStackController extends BaseController
             }
             else
             {
-                JSONObject body = requestPartnerStack("/customers",
-                        buildCommonParams(minCreated, maxCreated, fetchLimit, null, null), access.token());
-                JSONObject data = body.getJSONObject("data");
-                customerSource = data == null ? new JSONArray() : data.getJSONArray("items");
-                if (customerSource == null)
-                {
-                    customerSource = new JSONArray();
-                }
+                customerSource = fetchAllItems("/customers",
+                        buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null), access.token());
             }
             JSONArray customers = filterItems(customerSource, scope, subId, minCreated, maxCreated,
                     access.fallbackSubId());
@@ -293,11 +287,18 @@ public class PartnerStackController extends BaseController
                 {
                     continue;
                 }
-                String currentCustomerKey = customer.getString("key");
-                if (StringUtils.hasText(customerKey) && !containsIgnoreCase(currentCustomerKey, customerKey))
+                if (!matchesAdAccountId(customer, customerKey))
                 {
                     continue;
                 }
+                boolean hasPaid = customer.getBooleanValue("has_paid");
+                if (StringUtils.hasText(status)
+                        && (("paid".equalsIgnoreCase(status) && !hasPaid)
+                                || ("registered".equalsIgnoreCase(status) && hasPaid)))
+                {
+                    continue;
+                }
+                String currentCustomerKey = customer.getString("key");
                 BigDecimal amountSum = decimalFromCents(customer.getBigDecimal("amount_sum"));
                 if (amountSum.compareTo(minAmountSUM == null ? BigDecimal.ZERO : minAmountSUM) < 0)
                 {
@@ -309,7 +310,7 @@ public class PartnerStackController extends BaseController
                         ? customer.getString("customer_key") : currentCustomerKey);
                 row.put("subId", firstSubId(customer) != null ? firstSubId(customer) : access.fallbackSubId());
                 row.put("countryIso", extractCountry(customer));
-                row.put("hasPaid", customer.getBooleanValue("has_paid") ? 1 : 0);
+                row.put("hasPaid", hasPaid ? 1 : 0);
                 row.put("sourceType", "推荐链接");
                 row.put("totalRevenue", decimalFromCents(customer.getBigDecimal("total_revenue")));
                 row.put("createdDate", formatDateOnly(customer.getLong("created_at")));
@@ -320,9 +321,7 @@ public class PartnerStackController extends BaseController
             }
             rows.sort(Comparator.comparing((JSONObject row) -> row.getString("updatedAt"),
                     Comparator.nullsLast(Comparator.reverseOrder())));
-            int fromIndex = Math.min((safePageNum - 1) * safePageSize, rows.size());
-            int toIndex = Math.min(fromIndex + safePageSize, rows.size());
-            List<JSONObject> pagedRows = rows.subList(fromIndex, toIndex);
+            List<JSONObject> pagedRows = pageRows(rows, safePageNum, safePageSize);
             return AjaxResult.success(new JSONObject()
                     .fluentPut("total", rows.size())
                     .fluentPut("rows", pagedRows));
@@ -775,6 +774,33 @@ public class PartnerStackController extends BaseController
     {
         return StringUtils.hasText(value) && StringUtils.hasText(query)
                 && value.toLowerCase().contains(query.trim().toLowerCase());
+    }
+
+    static boolean matchesAdAccountId(JSONObject customer, String query)
+    {
+        if (!StringUtils.hasText(query))
+        {
+            return true;
+        }
+        return containsTextIgnoreCase(customer.getString("key"), query)
+                || containsTextIgnoreCase(customer.getString("customer_key"), query)
+                || containsTextIgnoreCase(customer.getString("shared_id"), query);
+    }
+
+    static <T> List<T> pageRows(List<T> rows, int pageNum, int pageSize)
+    {
+        int safePageNum = Math.max(pageNum, 1);
+        int safePageSize = Math.max(pageSize, 1);
+        int fromIndex = Math.min((safePageNum - 1) * safePageSize, rows.size());
+        int toIndex = Math.min(fromIndex + safePageSize, rows.size());
+        return rows.subList(fromIndex, toIndex);
+    }
+
+    private static boolean containsTextIgnoreCase(String value, String query)
+    {
+        return StringUtils.hasText(value) && StringUtils.hasText(query)
+                && value.toLowerCase(java.util.Locale.ROOT)
+                        .contains(query.trim().toLowerCase(java.util.Locale.ROOT));
     }
 
     private BigDecimal decimalFromCents(BigDecimal value)

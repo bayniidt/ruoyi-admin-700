@@ -36,7 +36,7 @@
     </el-card>
 
     <el-card shadow="never" class="table-card">
-      <el-table :data="filteredList" border v-loading="loading">
+      <el-table :data="accountList" border v-loading="loading">
         <el-table-column prop="contact" label="联系人" min-width="220">
           <template slot-scope="scope">
             <el-button type="text" class="account-link" @click="openTransactionDialog(scope.row)">{{ scope.row.contact }}</el-button>
@@ -56,6 +56,17 @@
         </el-table-column>
         <el-table-column prop="createdDate" label="日期已创建" min-width="140" align="center" />
       </el-table>
+      <el-pagination
+        class="table-pagination"
+        background
+        layout="total, sizes, prev, pager, next, jumper"
+        :current-page.sync="pagination.pageNum"
+        :page-size.sync="pagination.pageSize"
+        :page-sizes="[10, 20, 50, 100]"
+        :total="pagination.total"
+        @current-change="handlePageChange"
+        @size-change="handleSizeChange"
+      />
     </el-card>
 
     <el-dialog
@@ -111,6 +122,11 @@ export default {
         { label: '已付费', value: 'paid' }
       ],
       accountList: [],
+      pagination: {
+        pageNum: 1,
+        pageSize: 10,
+        total: 0
+      },
       dialog: {
         open: false,
         loading: false,
@@ -122,15 +138,6 @@ export default {
     }
   },
   computed: {
-    filteredList() {
-      return this.accountList.filter(item => {
-        const matchId = !this.filters.accountId || item.contact.toLowerCase().includes(this.filters.accountId.toLowerCase())
-        const matchSubId = !this.filters.subId || item.subId === this.filters.subId
-        const matchStatus = !this.filters.status || item.status === this.filters.status
-        const matchSpend = Number(item.revenue) >= Number(this.filters.minSpend || 0)
-        return matchId && matchSubId && matchStatus && matchSpend
-      })
-    },
     filteredTransactions() {
       return this.dialog.rows
     }
@@ -146,10 +153,12 @@ export default {
           ...this.buildRangeParams(),
           customerKey: this.filters.accountId || undefined,
           subId: this.filters.subId || undefined,
+          status: this.filters.status || undefined,
           minAmountSUM: this.filters.minSpend || 0,
-          pageNum: 1,
-          pageSize: 10
+          pageNum: this.pagination.pageNum,
+          pageSize: this.pagination.pageSize
         })
+        this.pagination.total = Number(response.data && response.data.total ? response.data.total : 0)
         const list = this.extractRows(response)
         this.accountList = list.map(item => {
           const status = this.normalizeStatus(item.hasPaid)
@@ -224,6 +233,7 @@ export default {
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     },
     handleSearch() {
+      this.pagination.pageNum = 1
       this.fetchAccounts()
     },
     handleReset() {
@@ -234,6 +244,16 @@ export default {
         status: '',
         minSpend: 0
       }
+      this.pagination.pageNum = 1
+      this.fetchAccounts()
+    },
+    handlePageChange(page) {
+      this.pagination.pageNum = page
+      this.fetchAccounts()
+    },
+    handleSizeChange(size) {
+      this.pagination.pageSize = size
+      this.pagination.pageNum = 1
       this.fetchAccounts()
     },
     async openTransactionDialog(row) {
@@ -285,6 +305,11 @@ export default {
   background: #f7f9fc;
   color: #5d6785;
   font-weight: 600;
+}
+
+.table-pagination {
+  margin-top: 18px;
+  text-align: right;
 }
 
 .account-link {
