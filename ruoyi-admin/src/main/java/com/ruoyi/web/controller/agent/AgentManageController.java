@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -50,11 +51,20 @@ public class AgentManageController extends BaseController
         return AjaxResult.success("新增代理成功，请立即保存接口密钥", credential);
     }
 
+    @Log(title = "代理管理", businessType = BusinessType.UPDATE)
+    @PutMapping("/{agentId}")
+    public AjaxResult update(@PathVariable Long agentId, @RequestBody AgentClient agent)
+    {
+        agent.setAgentId(agentId);
+        agentClientService.updateAgent(agent, SecurityUtils.isAdmin() ? null : getUserId());
+        return success("代理信息更新成功");
+    }
+
     @Log(title = "代理接口密钥", businessType = BusinessType.UPDATE)
     @PostMapping("/{agentId}/reset-secret")
     public AjaxResult resetSecret(@PathVariable Long agentId)
     {
-        String apiSecret = agentClientService.resetSecret(agentId, getUserId());
+        String apiSecret = agentClientService.resetSecret(agentId, SecurityUtils.isAdmin() ? null : getUserId());
         return AjaxResult.success("密钥已重置，请立即保存", Map.of("apiSecret", apiSecret));
     }
 }

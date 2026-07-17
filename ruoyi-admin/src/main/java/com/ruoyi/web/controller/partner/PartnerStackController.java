@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -91,16 +92,17 @@ public class PartnerStackController extends BaseController
                 customerSource = fetchAllItems("/customers", customerParams, access.token());
             }
 
-            JSONArray customers = filterItems(customerSource, scope, subId, minCreated, maxCreated);
+            JSONArray customers = filterItems(customerSource, scope, subId, minCreated, maxCreated,
+                    access.fallbackSubId());
             Map<String, Object> eventParams = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
             putIfPresent(eventParams, "customer_key", scope.queryCustomerKey());
             JSONArray actions = filterItems(fetchAllItems("/actions", eventParams, access.token()), scope, subId,
-                    minCreated, maxCreated);
+                    minCreated, maxCreated, access.fallbackSubId());
             JSONArray transactions = filterItems(fetchAllItems("/transactions",
                     buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null), access.token()), scope, subId,
-                    minCreated, maxCreated);
+                    minCreated, maxCreated, access.fallbackSubId());
             JSONArray rewards = filterItems(fetchAllItems("/rewards", eventParams, access.token()), scope, subId,
-                    minCreated, maxCreated);
+                    minCreated, maxCreated, access.fallbackSubId());
 
             if (StringUtils.hasText(transactionId))
             {
@@ -111,7 +113,8 @@ public class PartnerStackController extends BaseController
                         ? null : ((JSONObject) item).getJSONObject("source").getString("key"), transactionId));
             }
 
-            return success(buildDashboard(access.displayKey(), customers, actions, transactions, rewards));
+            return success(buildDashboard(access.displayKey(), access.fallbackSubId(), customers, actions,
+                    transactions, rewards));
         }
         catch (PartnerStackApiException e)
         {
@@ -236,13 +239,13 @@ public class PartnerStackController extends BaseController
         String userKey = user.getPartnerStackKey().trim();
         if (looksLikeAccessToken(userKey))
         {
-            return new PartnerAccess(userKey, Scope.all(), maskSecret(userKey));
+            return new PartnerAccess(userKey, Scope.all(), maskSecret(userKey), user.getUserName());
         }
         if (!StringUtils.hasText(platformToken))
         {
             throw new ServiceException("当前账号绑定的是 PartnerStack 数据Key，但系统未配置 PARTNERSTACK_TOKEN");
         }
-        return new PartnerAccess(platformToken.trim(), Scope.from(userKey), userKey);
+        return new PartnerAccess(platformToken.trim(), Scope.from(userKey), userKey, user.getUserName());
     }
 
     private boolean looksLikeAccessToken(String value)
@@ -409,12 +412,14 @@ public class PartnerStackController extends BaseController
         return unresolved.withCustomerKeys(customerKeys);
     }
 
-    private JSONArray filterItems(JSONArray source, Scope scope, String subId, Long minCreated, Long maxCreated)
+    private JSONArray filterItems(JSONArray source, Scope scope, String subId, Long minCreated, Long maxCreated,
+            String fallbackSubId)
     {
         JSONArray result = new JSONArray();
         for (Object item : source)
         {
-            if (item instanceof JSONObject object && matchesScope(object, scope) && matchesSubId(object, subId)
+            if (item instanceof JSONObject object && matchesScope(object, scope)
+                    && matchesSubId(object, subId, fallbackSubId)
                     && matchesCreatedAt(object, minCreated, maxCreated))
             {
                 result.add(object);
@@ -461,7 +466,7 @@ public class PartnerStackController extends BaseController
         return false;
     }
 
-    private boolean matchesSubId(JSONObject item, String subId)
+    private boolean matchesSubId(JSONObject item, String subId, String fallbackSubId)
     {
         if (!StringUtils.hasText(subId))
         {
@@ -469,7 +474,8 @@ public class PartnerStackController extends BaseController
         }
         JSONObject customer = item.getJSONObject("customer");
         JSONArray subIds = customer == null ? item.getJSONArray("sub_ids") : customer.getJSONArray("sub_ids");
-        return contains(subIds, subId);
+        return contains(subIds, subId)
+                || ((subIds == null || subIds.isEmpty()) && subId.equals(fallbackSubId));
     }
 
     private boolean contains(JSONArray values, String expected)
@@ -487,15 +493,15 @@ public class PartnerStackController extends BaseController
                 && value.toLowerCase().contains(query.trim().toLowerCase());
     }
 
-    private JSONObject buildDashboard(String partnerStackKey, JSONArray customers, JSONArray actions,
-            JSONArray transactions, JSONArray rewards)
+    private JSONObject buildDashboard(String partnerStackKey, String fallbackSubId, JSONArray customers,
+            JSONArray actions, JSONArray transactions, JSONArray rewards)
     {
         Map<String, JSONObject> rows = new LinkedHashMap<>();
         long paidCustomers = 0;
         for (Object item : customers)
         {
             JSONObject customer = (JSONObject) item;
-            JSONObject row = dashboardRow(rows, customer);
+            JSONObject row = dashboardRow(rows, customer, fallbackSubId);
             row.put("customerCreated", true);
             if (customer.getBooleanValue("has_paid"))
             {
@@ -511,7 +517,7 @@ public class PartnerStackController extends BaseController
         for (Object item : actions)
         {
             JSONObject action = (JSONObject) item;
-            JSONObject row = dashboardRow(rows, action);
+            JSONObject row = dashboardRow(rows, action, fallbackSubId);
             long value = action.getLongValue("value", 1L);
             if (value < 1)
             {
@@ -541,7 +547,7 @@ public class PartnerStackController extends BaseController
         for (Object item : transactions)
         {
             JSONObject transaction = (JSONObject) item;
-            JSONObject row = dashboardRow(rows, transaction);
+            JSONObject row = dashboardRow(rows, transaction, fallbackSubId);
             BigDecimal amount = cents(transaction.containsKey("amount_usd")
                     ? transaction.get("amount_usd") : transaction.get("amount"));
             transactionAmount = transactionAmount.add(amount);
@@ -553,15 +559,14 @@ public class PartnerStackController extends BaseController
         for (Object item : rewards)
         {
             JSONObject reward = (JSONObject) item;
-            JSONObject row = dashboardRow(rows, reward);
+            JSONObject row = dashboardRow(rows, reward, fallbackSubId);
             BigDecimal amount = cents(reward.get("amount"));
             rewardAmount = rewardAmount.add(amount);
             row.put("rewards", row.getLongValue("rewards") + 1);
             row.put("rewardAmount", money(row.getBigDecimal("rewardAmount").add(amount)));
         }
 
-        List<JSONObject> sortedRows = new ArrayList<>(rows.values());
-        sortedRows.sort(Comparator.comparing((JSONObject row) -> row.getBigDecimal("transactionAmount")).reversed());
+        List<JSONObject> sortedRows = aggregateBySubId(rows.values(), fallbackSubId);
 
         JSONObject summary = new JSONObject();
         summary.put("customers", customers.size());
@@ -574,16 +579,19 @@ public class PartnerStackController extends BaseController
         summary.put("transactionAmount", money(transactionAmount));
         summary.put("rewards", rewards.size());
         summary.put("rewardAmount", money(rewardAmount));
+        // PartnerStack 的这四个接口没有返回点击字段，保留为 0，避免把动作数伪装成点击数。
+        summary.put("rawClicks", 0L);
+        summary.put("uniqueClicks", 0L);
 
         JSONObject result = new JSONObject();
         result.put("partnerStackKey", partnerStackKey);
         result.put("summary", summary);
         result.put("rows", sortedRows);
-        result.put("subIds", collectSubIds(customers, actions, transactions, rewards));
+        result.put("subIds", collectSubIds(fallbackSubId, customers, actions, transactions, rewards));
         return result;
     }
 
-    private JSONObject dashboardRow(Map<String, JSONObject> rows, JSONObject item)
+    private JSONObject dashboardRow(Map<String, JSONObject> rows, JSONObject item, String fallbackSubId)
     {
         String customerKey = extractCustomerKey(item);
         if (!StringUtils.hasText(customerKey))
@@ -594,7 +602,7 @@ public class PartnerStackController extends BaseController
         JSONObject row = rows.computeIfAbsent(rowKey, ignored -> {
             JSONObject value = new JSONObject();
             value.put("customerKey", rowKey);
-            value.put("subId", "-");
+            value.put("subId", fallbackSubId);
             value.put("customerCreated", false);
             value.put("hasPaid", false);
             value.put("signups", 0L);
@@ -615,7 +623,45 @@ public class PartnerStackController extends BaseController
         return row;
     }
 
-    private JSONArray collectSubIds(JSONArray... sources)
+    private List<JSONObject> aggregateBySubId(Collection<JSONObject> customerRows, String fallbackSubId)
+    {
+        Map<String, JSONObject> rows = new LinkedHashMap<>();
+        for (JSONObject source : customerRows)
+        {
+            String subId = StringUtils.hasText(source.getString("subId"))
+                    ? source.getString("subId") : fallbackSubId;
+            JSONObject row = rows.computeIfAbsent(subId, ignored -> {
+                JSONObject value = new JSONObject();
+                value.put("subId", subId);
+                value.put("rawClicks", 0L);
+                value.put("uniqueClicks", 0L);
+                value.put("signups", 0L);
+                value.put("paidSignups", 0L);
+                value.put("actions", 0L);
+                value.put("validActions", 0L);
+                value.put("transactions", 0L);
+                value.put("transactionAmount", money(BigDecimal.ZERO));
+                value.put("rewards", 0L);
+                value.put("rewardAmount", money(BigDecimal.ZERO));
+                return value;
+            });
+            row.put("signups", row.getLongValue("signups") + source.getLongValue("signups"));
+            row.put("paidSignups", row.getLongValue("paidSignups") + source.getLongValue("paidSignups"));
+            row.put("actions", row.getLongValue("actions") + source.getLongValue("actions"));
+            row.put("validActions", row.getLongValue("validActions") + source.getLongValue("validActions"));
+            row.put("transactions", row.getLongValue("transactions") + source.getLongValue("transactions"));
+            row.put("rewards", row.getLongValue("rewards") + source.getLongValue("rewards"));
+            row.put("transactionAmount", money(row.getBigDecimal("transactionAmount")
+                    .add(source.getBigDecimal("transactionAmount"))));
+            row.put("rewardAmount", money(row.getBigDecimal("rewardAmount")
+                    .add(source.getBigDecimal("rewardAmount"))));
+        }
+        List<JSONObject> result = new ArrayList<>(rows.values());
+        result.sort(Comparator.comparing((JSONObject row) -> row.getBigDecimal("transactionAmount")).reversed());
+        return result;
+    }
+
+    private JSONArray collectSubIds(String fallbackSubId, JSONArray... sources)
     {
         Set<String> values = new HashSet<>();
         for (JSONArray source : sources)
@@ -630,6 +676,10 @@ public class PartnerStackController extends BaseController
                     subIds.forEach(value -> values.add(String.valueOf(value)));
                 }
             }
+        }
+        if (values.isEmpty() && StringUtils.hasText(fallbackSubId))
+        {
+            values.add(fallbackSubId);
         }
         return new JSONArray(new ArrayList<>(values));
     }
@@ -699,7 +749,7 @@ public class PartnerStackController extends BaseController
         }
     }
 
-    private record PartnerAccess(String token, Scope scope, String displayKey)
+    private record PartnerAccess(String token, Scope scope, String displayKey, String fallbackSubId)
     {
     }
 

@@ -22,7 +22,7 @@ import com.ruoyi.system.service.ISysUserService;
 @Service
 public class AgentClientService
 {
-    private static final BigDecimal MAX_COMMISSION_RATE = new BigDecimal("20");
+    private static final BigDecimal MAX_COMMISSION_RATE = new BigDecimal("100");
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final AgentClientMapper agentClientMapper;
@@ -113,6 +113,25 @@ public class AgentClientService
             throw new ServiceException("代理不存在或无权操作");
         }
         return apiSecret;
+    }
+
+    @Transactional
+    public void updateAgent(AgentClient agent, Long ownerUserId)
+    {
+        if (agent == null || agent.getAgentId() == null)
+        {
+            throw new ServiceException("代理不存在");
+        }
+        if (agent.getCommissionRate() != null
+                && (agent.getCommissionRate().compareTo(BigDecimal.ZERO) < 0
+                || agent.getCommissionRate().compareTo(MAX_COMMISSION_RATE) > 0))
+        {
+            throw new ServiceException("佣金比例必须介于0和20之间");
+        }
+        if (agentClientMapper.updateAgent(agent, ownerUserId) == 0)
+        {
+            throw new ServiceException("代理不存在或无权操作");
+        }
     }
 
     public AgentClient authenticate(String apiKey, String apiSecret)

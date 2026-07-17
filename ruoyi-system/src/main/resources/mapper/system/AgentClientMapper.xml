@@ -74,7 +74,20 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <update id="updateSecret">
         update agent_client set api_secret_hash = #{apiSecretHash}, update_time = sysdate()
-        where agent_id = #{agentId} and owner_user_id = #{ownerUserId}
+        where agent_id = #{agentId}
+        <if test="ownerUserId != null">and owner_user_id = #{ownerUserId}</if>
+    </update>
+
+    <update id="updateAgent">
+        update agent_client
+        <set>
+            <if test="agent.nickName != null">nick_name = #{agent.nickName},</if>
+            <if test="agent.remark != null">remark = #{agent.remark},</if>
+            <if test="agent.commissionRate != null">commission_rate = #{agent.commissionRate},</if>
+            update_time = sysdate()
+        </set>
+        where agent_id = #{agent.agentId}
+        <if test="ownerUserId != null">and owner_user_id = #{ownerUserId}</if>
     </update>
 
     <insert id="insertUsage" parameterType="AgentUsage">

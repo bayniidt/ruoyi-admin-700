@@ -22,3 +22,11 @@ export function resetAgentSecret(agentId) {
     method: 'post'
   })
 }
+
+export function updateAgent(agent) {
+  return request({
+    url: `/agent/manage/${agent.agentId}`,
+    method: 'put',
+    data: agent
+  })
+}

@@ -22,5 +22,7 @@ public interface AgentClientMapper
     int updateSecret(@Param("agentId") Long agentId, @Param("ownerUserId") Long ownerUserId,
             @Param("apiSecretHash") String apiSecretHash);
 
+    int updateAgent(@Param("agent") AgentClient agent, @Param("ownerUserId") Long ownerUserId);
+
     int insertUsage(AgentUsage usage);
 }

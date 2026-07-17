@@ -1,21 +1,7 @@
 <template>
   <div class="dashboard-page">
-    <div class="dashboard-hero">
-      <div>
-        <p class="dashboard-eyebrow">Overview Dashboard</p>
-        <h1>渠道数据总览</h1>
-        <p class="dashboard-subtitle">
-          当前展示账号 {{ partnerStackKey || '-' }} 在 PartnerStack 的实时数据。
-        </p>
-      </div>
-      <div class="hero-amount">
-        <span>预估分销佣金</span>
-        <strong>${{ formatMoney(summary.rewardAmount) }}</strong>
-      </div>
-    </div>
-
-    <el-card shadow="never" class="filter-panel">
-      <el-form :inline="true" :model="filters" class="dashboard-form" v-loading="loading">
+    <section class="filter-panel" v-loading="loading">
+      <el-form :inline="true" :model="filters" class="dashboard-form">
         <el-form-item label="日期范围">
           <el-date-picker
             v-model="filters.dateRange"
@@ -28,107 +14,84 @@
         </el-form-item>
         <el-form-item label="SubId">
           <el-select v-model="filters.subId" placeholder="全部" clearable>
-            <el-option
-              v-for="item in subIdOptions"
-              :key="item"
-              :label="item"
-              :value="item"
-            />
+            <el-option v-for="item in subIdOptions" :key="item" :label="item" :value="item" />
           </el-select>
         </el-form-item>
         <el-form-item label="交易ID">
-          <el-input v-model="filters.transactionId" placeholder="请输入交易ID" clearable />
+          <el-input v-model="filters.transactionId" placeholder="模糊搜索" clearable />
         </el-form-item>
-        <el-form-item>
+        <el-form-item class="query-item">
           <el-button type="primary" icon="el-icon-search" @click="handleSearch">查询</el-button>
-          <el-button icon="el-icon-refresh" @click="handleReset">重置</el-button>
         </el-form-item>
       </el-form>
-    </el-card>
+    </section>
 
-    <el-row :gutter="16" class="metric-grid" v-loading="loading">
-      <el-col v-for="card in metricCards" :key="card.key" :xs="24" :sm="12" :lg="8" :xl="6">
-        <el-card shadow="hover" class="metric-card">
-          <div class="metric-icon" :style="{ background: card.color }">
-            <i :class="card.icon"></i>
-          </div>
-          <div class="metric-content">
-            <span>{{ card.label }}</span>
-            <strong>{{ card.value }}</strong>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+    <section class="metric-grid" v-loading="loading">
+      <article v-for="card in metricCards" :key="card.key" class="metric-card">
+        <span class="metric-icon" :class="card.tone"><i :class="card.icon" /></span>
+        <span class="metric-copy">
+          <span>{{ card.label }}</span>
+          <strong>{{ card.value }}</strong>
+        </span>
+      </article>
+    </section>
 
-    <el-row :gutter="16" class="content-grid">
-      <el-col :xs="24" :lg="16">
-        <el-card shadow="never" class="detail-card">
-          <div slot="header" class="card-header">
-            <span>明细数据</span>
-            <span class="header-tip">共 {{ tableData.length }} 条</span>
-          </div>
-          <el-table :data="tableData" stripe v-loading="loading" empty-text="当前条件下暂无 PartnerStack 数据">
-            <el-table-column prop="customerKey" label="客户Key" min-width="180" />
-            <el-table-column prop="subId" label="SUBID" min-width="120" />
-            <el-table-column prop="signups" label="注册" align="right" />
-            <el-table-column prop="paidSignups" label="付费注册" align="right" />
-            <el-table-column prop="actions" label="动作数" align="right" />
-            <el-table-column prop="validActions" label="有效动作数" align="right" />
-            <el-table-column prop="transactions" label="交易笔数" align="right" />
-            <el-table-column prop="transactionAmount" label="有效消耗" min-width="110" align="right">
-              <template slot-scope="scope">${{ formatMoney(scope.row.transactionAmount) }}</template>
-            </el-table-column>
-            <el-table-column prop="rewardAmount" label="预估分销佣金" min-width="130" align="right">
-              <template slot-scope="scope">${{ formatMoney(scope.row.rewardAmount) }}</template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-      </el-col>
+    <section class="commission-bar">
+      <span class="commission-label">
+        <i class="el-icon-s-data" />
+        预估分销佣金
+        <i class="el-icon-question commission-help" />
+      </span>
+      <strong>${{ formatMoney(summary.rewardAmount) }}</strong>
+    </section>
 
-      <el-col :xs="24" :lg="8">
-        <el-card shadow="never" class="notice-card">
-          <div slot="header" class="card-header">
-            <span>结算说明</span>
-          </div>
-          <div class="notice-item">
-            <i class="el-icon-date"></i>
-            <span>业绩锁定日期：下个月 20 日（M+1）</span>
-          </div>
-          <div class="notice-item">
-            <i class="el-icon-wallet"></i>
-            <span>佣金结算日期：下下个月 20-30 日间（M+2）</span>
-          </div>
-          <div class="notice-divider"></div>
-          <div class="notice-summary">
-            <span>当前筛选条件下</span>
-            <strong>{{ summary.transactions }} 笔交易</strong>
-            <strong>{{ summary.signups }} 个注册动作</strong>
-          </div>
-        </el-card>
+    <section class="settlement-tip">
+      <i class="el-icon-info" />
+      <span>业绩锁定日期: 下个月20日（M+1） | 佣金结算日期: 下下个月20-30日间（M+2）</span>
+    </section>
 
-        <el-card shadow="never" class="mini-trend-card">
-          <div slot="header" class="card-header">
-            <span>筛选摘要</span>
-          </div>
-          <div class="trend-row">
-            <span>注册动作 / 新增客户</span>
-            <strong>{{ signupRate }}</strong>
-          </div>
-          <div class="trend-row">
-            <span>付费动作 / 注册动作</span>
-            <strong>{{ paidRate }}</strong>
-          </div>
-          <div class="trend-row">
-            <span>付费客户占比</span>
-            <strong>{{ paidCustomerRate }}</strong>
-          </div>
-          <div class="trend-row">
-            <span>平均单次消耗</span>
-            <strong>${{ averageTransactionAmount }}</strong>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+    <section class="detail-panel">
+      <header class="detail-header">
+        <strong>明细数据</strong>
+        <span>共 {{ tableData.length }} 条</span>
+      </header>
+      <div class="table-wrap">
+        <el-table
+          :data="tableData"
+          v-loading="loading"
+          empty-text="当前条件下暂无 PartnerStack 数据"
+          border
+        >
+          <el-table-column prop="subId" label="SUBID1" min-width="150">
+            <template slot-scope="scope"><span class="subid-link">{{ scope.row.subId || '-' }}</span></template>
+          </el-table-column>
+          <el-table-column prop="rawClicks" label="总点击" min-width="145" align="right">
+            <template slot-scope="scope"><span class="metric-value">{{ scope.row.rawClicks || 0 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="uniqueClicks" label="不重复点击" min-width="145" align="right">
+            <template slot-scope="scope"><span class="metric-value">{{ scope.row.uniqueClicks || 0 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="signups" label="注册" min-width="145" align="right">
+            <template slot-scope="scope"><span class="metric-value">{{ scope.row.signups || 0 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="paidSignups" label="付费注册" min-width="145" align="right">
+            <template slot-scope="scope"><span class="metric-value">{{ scope.row.paidSignups || 0 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="actions" label="动作数" min-width="145" align="right">
+            <template slot-scope="scope"><span class="metric-value">{{ scope.row.actions || 0 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="validActions" label="有效动作数" min-width="145" align="right">
+            <template slot-scope="scope"><span class="metric-value">{{ scope.row.validActions || 0 }}</span></template>
+          </el-table-column>
+          <el-table-column prop="transactionAmount" label="有效消耗" min-width="145" align="right">
+            <template slot-scope="scope"><span class="metric-value">${{ formatMoney(scope.row.transactionAmount) }}</span></template>
+          </el-table-column>
+          <el-table-column prop="rewardAmount" label="预估分销佣金" min-width="145" align="right">
+            <template slot-scope="scope"><span class="metric-value">${{ formatMoney(scope.row.rewardAmount) }}</span></template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -144,15 +107,13 @@ const createDefaultRange = () => {
   return [formatDateTime(start), formatDateTime(end)]
 }
 const emptySummary = () => ({
-  customers: 0,
-  paidCustomers: 0,
+  rawClicks: 0,
+  uniqueClicks: 0,
   signups: 0,
   paidSignups: 0,
   actions: 0,
   validActions: 0,
-  transactions: 0,
   transactionAmount: 0,
-  rewards: 0,
   rewardAmount: 0
 })
 
@@ -162,11 +123,7 @@ export default {
     return {
       loading: false,
       partnerStackKey: '',
-      filters: {
-        dateRange: createDefaultRange(),
-        subId: '',
-        transactionId: ''
-      },
+      filters: { dateRange: createDefaultRange(), subId: '', transactionId: '' },
       subIdOptions: [],
       summary: emptySummary(),
       tableData: []
@@ -175,28 +132,14 @@ export default {
   computed: {
     metricCards() {
       return [
-        { key: 'customers', label: '新增客户', value: this.summary.customers, icon: 'el-icon-user', color: 'linear-gradient(135deg, #6f7bf7, #8e66ff)' },
-        { key: 'paidCustomers', label: '付费客户', value: this.summary.paidCustomers, icon: 'el-icon-s-custom', color: 'linear-gradient(135deg, #5f8bff, #6ca8ff)' },
-        { key: 'signups', label: '注册动作', value: this.summary.signups, icon: 'el-icon-circle-plus-outline', color: 'linear-gradient(135deg, #23b7a4, #49d3a8)' },
-        { key: 'actions', label: '动作数', value: this.summary.actions, icon: 'el-icon-data-analysis', color: 'linear-gradient(135deg, #f0b429, #f7d154)' },
-        { key: 'validActions', label: '有效动作数', value: this.summary.validActions, icon: 'el-icon-histogram', color: 'linear-gradient(135deg, #4d7cff, #58c0ff)' },
-        { key: 'transactions', label: '交易笔数', value: this.summary.transactions, icon: 'el-icon-tickets', color: 'linear-gradient(135deg, #f58a66, #f7b267)' },
-        { key: 'transactionAmount', label: '有效消耗', value: `$${this.formatMoney(this.summary.transactionAmount)}`, icon: 'el-icon-wallet', color: 'linear-gradient(135deg, #8b5cf6, #c084fc)' },
-        { key: 'rewards', label: '奖励笔数', value: this.summary.rewards, icon: 'el-icon-coin', color: 'linear-gradient(135deg, #17a2b8, #45c4d4)' }
+        { key: 'rawClicks', label: '原始点击', value: this.summary.rawClicks || 0, icon: 'el-icon-view', tone: 'purple' },
+        { key: 'uniqueClicks', label: '不重复点击', value: this.summary.uniqueClicks || 0, icon: 'el-icon-thumb', tone: 'blue' },
+        { key: 'signups', label: '注册数', value: this.summary.signups || 0, icon: 'el-icon-s-custom', tone: 'blue' },
+        { key: 'paidSignups', label: '付费注册数', value: this.summary.paidSignups || 0, icon: 'el-icon-user', tone: 'blue' },
+        { key: 'actions', label: '动作数', value: this.summary.actions || 0, icon: 'el-icon-s-data', tone: 'amber' },
+        { key: 'validActions', label: '有效动作数', value: this.summary.validActions || 0, icon: 'el-icon-s-data', tone: 'blue' },
+        { key: 'transactionAmount', label: '有效消耗', value: `$${this.formatMoney(this.summary.transactionAmount)}`, icon: 'el-icon-wallet', tone: 'purple' }
       ]
-    },
-    signupRate() {
-      return this.toPercent(this.summary.signups, this.summary.customers)
-    },
-    paidRate() {
-      return this.toPercent(this.summary.paidSignups, this.summary.signups)
-    },
-    paidCustomerRate() {
-      return this.toPercent(this.summary.paidCustomers, this.summary.customers)
-    },
-    averageTransactionAmount() {
-      if (!this.summary.transactions) return '0.00'
-      return this.formatMoney(Number(this.summary.transactionAmount) / this.summary.transactions)
     }
   },
   created() {
@@ -205,9 +148,9 @@ export default {
   methods: {
     async initializeDashboard() {
       const response = await getUserProfile()
-      const partnerStackKey = response.data && response.data.partnerStackKey
-      if (partnerStackKey && partnerStackKey.trim()) {
-        this.partnerStackKey = this.maskPartnerStackKey(partnerStackKey.trim())
+      const key = response.data && response.data.partnerStackKey
+      if (key && key.trim()) {
+        this.partnerStackKey = this.maskPartnerStackKey(key.trim())
         await this.fetchDashboard()
         return
       }
@@ -227,9 +170,9 @@ export default {
           return true
         }
       }).then(async ({ value }) => {
-        const partnerStackKey = value.trim()
-        await updatePartnerStackKey(partnerStackKey)
-        this.partnerStackKey = this.maskPartnerStackKey(partnerStackKey)
+        const key = value.trim()
+        await updatePartnerStackKey(key)
+        this.partnerStackKey = this.maskPartnerStackKey(key)
         this.$modal.msgSuccess('PartnerStack Key绑定成功')
         await this.fetchDashboard()
       }).catch(() => {})
@@ -256,24 +199,12 @@ export default {
     handleSearch() {
       this.fetchDashboard()
     },
-    handleReset() {
-      this.filters = {
-        dateRange: createDefaultRange(),
-        subId: '',
-        transactionId: ''
-      }
-      this.fetchDashboard()
-    },
     formatMoney(value) {
       return Number(value || 0).toFixed(2)
     },
     maskPartnerStackKey(value) {
       if (!value || value.length <= 12 || value.startsWith('part_') || value.startsWith('cus_')) return value
       return `${value.slice(0, 4)}****${value.slice(-4)}`
-    },
-    toPercent(numerator, denominator) {
-      if (!denominator) return '0.0%'
-      return `${(Number(numerator || 0) * 100 / Number(denominator)).toFixed(1)}%`
     }
   }
 }
@@ -281,220 +212,190 @@ export default {
 
 <style lang="scss" scoped>
 .dashboard-page {
-  padding: 4px;
-  background: #f5f7fb;
-}
-
-.dashboard-hero {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 20px;
-  margin-bottom: 16px;
-  padding: 28px 30px;
-  color: #fff;
-  border-radius: 20px;
-  background: linear-gradient(135deg, #2f3f74 0%, #5868d6 55%, #8a63ff 100%);
-  box-shadow: 0 18px 36px rgba(74, 92, 177, 0.22);
-}
-
-.dashboard-eyebrow {
-  margin: 0 0 10px;
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.72);
-}
-
-.dashboard-hero h1 {
-  margin: 0;
-  font-size: 32px;
-  font-weight: 700;
-}
-
-.dashboard-subtitle {
-  max-width: 560px;
-  margin: 12px 0 0;
-  font-size: 14px;
-  line-height: 1.7;
-  color: rgba(255, 255, 255, 0.84);
-}
-
-.hero-amount {
-  min-width: 220px;
-  padding: 18px 20px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(8px);
-}
-
-.hero-amount span {
-  display: block;
-  margin-bottom: 10px;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.78);
-}
-
-.hero-amount strong {
-  font-size: 38px;
-  line-height: 1;
+  min-height: calc(100vh - 104px);
+  padding: 20px;
+  background: #f3f6f9;
+  color: #1f2d3d;
 }
 
 .filter-panel {
-  margin-bottom: 16px;
-  border: 0;
-  border-radius: 18px;
+  min-height: 92px;
+  margin-bottom: 20px;
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #edf0f5;
+  border-radius: 4px;
+}
+
+.dashboard-form {
+  display: flex;
+  align-items: center;
+  min-height: 50px;
 }
 
 .dashboard-form ::v-deep .el-form-item {
-  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  margin: 0 28px 0 0;
 }
 
-.dashboard-form ::v-deep .el-input__inner,
-.dashboard-form ::v-deep .el-range-input,
+.dashboard-form ::v-deep .el-form-item__label {
+  padding-right: 12px;
+  color: #606a7b;
+  font-weight: 600;
+}
+
 .dashboard-form ::v-deep .el-date-editor {
-  border-radius: 12px;
+  width: 400px;
+}
+
+.dashboard-form ::v-deep .el-select,
+.dashboard-form ::v-deep .el-input {
+  width: 190px;
+}
+
+.dashboard-form .query-item {
+  margin-right: 0;
+}
+
+.dashboard-form ::v-deep .el-button {
+  min-width: 88px;
 }
 
 .metric-grid {
-  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin-bottom: 12px;
 }
 
 .metric-card {
   display: flex;
   align-items: center;
-  min-height: 124px;
-  border: 0;
-  border-radius: 18px;
-  box-shadow: 0 10px 26px rgba(25, 39, 75, 0.06);
-}
-
-.metric-card ::v-deep .el-card__body {
-  display: flex;
-  align-items: center;
-  width: 100%;
+  min-height: 122px;
+  padding: 28px 38px;
+  background: #fff;
+  border: 1px solid #edf0f5;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(31, 45, 61, 0.03);
 }
 
 .metric-icon {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
-  height: 52px;
-  margin-right: 16px;
+  width: 48px;
+  height: 48px;
+  margin-right: 14px;
   color: #fff;
-  border-radius: 16px;
-  font-size: 22px;
-  flex-shrink: 0;
+  border-radius: 7px;
+  font-size: 20px;
+  flex: 0 0 auto;
 }
 
-.metric-content span {
+.metric-icon.blue { background: #3d7eff; }
+.metric-icon.purple { background: #805df0; }
+.metric-icon.amber { background: #eda42b; }
+
+.metric-copy > span {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 7px;
+  color: #8c98aa;
   font-size: 13px;
-  color: #7d879c;
 }
 
-.metric-content strong {
-  font-size: 34px;
+.metric-copy strong {
+  color: #182238;
+  font-size: 23px;
   line-height: 1;
-  color: #1f2940;
 }
 
-.content-grid {
-  margin-bottom: 10px;
-}
-
-.detail-card,
-.notice-card,
-.mini-trend-card {
-  border: 0;
-  border-radius: 18px;
-  box-shadow: 0 10px 26px rgba(25, 39, 75, 0.06);
-}
-
-.card-header {
+.commission-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-weight: 600;
-  color: #1f2940;
-}
-
-.header-tip {
-  font-size: 12px;
-  font-weight: 400;
-  color: #8b94a7;
-}
-
-.notice-card {
+  min-height: 112px;
   margin-bottom: 16px;
+  padding: 0 38px;
+  color: #fff;
+  border-radius: 6px;
+  background: linear-gradient(105deg, #3e7cf5 0%, #6368f5 55%, #9360f2 100%);
 }
 
-.notice-item {
+.commission-label {
   display: flex;
   align-items: center;
-  margin-bottom: 14px;
-  font-size: 13px;
-  color: #475069;
-}
-
-.notice-item i {
-  margin-right: 10px;
-  color: #5d7cff;
-  font-size: 16px;
-}
-
-.notice-divider {
-  height: 1px;
-  margin: 18px 0;
-  background: #e9edf5;
-}
-
-.notice-summary {
-  display: flex;
-  flex-direction: column;
   gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
 }
 
-.notice-summary span {
-  color: #8b94a7;
-  font-size: 12px;
+.commission-help { opacity: 0.65; font-size: 13px; }
+.commission-bar > strong { font-size: 28px; }
+
+.settlement-tip {
+  display: flex;
+  align-items: center;
+  min-height: 47px;
+  margin-bottom: 20px;
+  padding: 0 18px;
+  color: #2461b3;
+  font-size: 13px;
+  font-weight: 600;
+  background: #edf4ff;
+  border: 1px solid #aecdff;
+  border-radius: 7px;
 }
 
-.notice-summary strong {
-  color: #1f2940;
-  font-size: 22px;
+.settlement-tip i { margin-right: 12px; }
+
+.detail-panel {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #edf0f5;
+  border-radius: 4px;
+  box-shadow: 0 5px 14px rgba(31, 45, 61, 0.07);
 }
 
-.mini-trend-card .trend-row {
+.detail-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 0;
-  border-bottom: 1px solid #eef2f8;
-  font-size: 13px;
-  color: #657089;
+  height: 50px;
+  padding: 0 15px;
+  border-bottom: 1px solid #e7ebf0;
 }
 
-.mini-trend-card .trend-row:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
-}
+.detail-header strong { font-size: 15px; }
+.detail-header span { color: #8b9bb0; font-size: 12px; }
+.table-wrap { padding: 15px 20px 20px; overflow-x: auto; }
+.table-wrap ::v-deep .el-table { min-width: 1160px; color: #5f6a7c; }
+.table-wrap ::v-deep th.el-table__cell { background: #f7f9fb; color: #657083; font-weight: 600; }
+.table-wrap ::v-deep .el-table__cell { height: 44px; padding: 0; }
+.subid-link { color: #1890ff; }
+.metric-value { color: #67c23a; }
 
-.mini-trend-card strong {
-  color: #1f2940;
-  font-size: 18px;
+@media (max-width: 1400px) {
+  .dashboard-form { flex-wrap: wrap; gap: 12px 0; }
+  .dashboard-form ::v-deep .el-form-item { margin-right: 18px; }
+  .dashboard-form ::v-deep .el-date-editor { width: 360px; }
 }
 
 @media (max-width: 992px) {
-  .dashboard-hero {
-    flex-direction: column;
-  }
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-form { align-items: stretch; }
+}
 
-  .hero-amount {
-    min-width: auto;
-    width: 100%;
-  }
+@media (max-width: 620px) {
+  .dashboard-page { padding: 12px; }
+  .metric-grid { grid-template-columns: 1fr; }
+  .metric-card { min-height: 100px; padding: 22px; }
+  .dashboard-form ::v-deep .el-form-item { width: 100%; margin-right: 0; }
+  .dashboard-form ::v-deep .el-form-item__content { flex: 1; }
+  .dashboard-form ::v-deep .el-date-editor,
+  .dashboard-form ::v-deep .el-select,
+  .dashboard-form ::v-deep .el-input { width: 100%; }
+  .commission-bar { min-height: 92px; padding: 0 20px; }
+  .commission-bar > strong { font-size: 23px; }
 }
 </style>

@@ -16,44 +16,47 @@
       </div>
 
       <el-table :data="agentList" border class="agent-table" v-loading="loading">
-        <el-table-column prop="userName" label="用户名" min-width="160" />
-        <el-table-column prop="nickName" label="昵称" min-width="160" />
-        <el-table-column prop="remark" label="备注" min-width="180">
+        <el-table-column prop="userName" label="用户名" width="210" />
+        <el-table-column prop="nickName" label="昵称" width="210">
           <template slot-scope="scope">
-            <span>{{ scope.row.remark || "-" }}</span>
+            <el-input
+              v-model="scope.row.nickName"
+              size="mini"
+              placeholder="点击输入"
+              @blur="handleInlineUpdate(scope.row, 'nickName')"
+            />
           </template>
         </el-table-column>
-        <el-table-column prop="commissionRate" label="分成比例" min-width="140" align="center">
+        <el-table-column prop="remark" label="备注" width="210">
           <template slot-scope="scope">
-            <span>{{ scope.row.commissionRate }}%</span>
+            <el-input
+              v-model="scope.row.remark"
+              size="mini"
+              placeholder="点击输入"
+              @blur="handleInlineUpdate(scope.row, 'remark')"
+            />
           </template>
         </el-table-column>
-        <el-table-column prop="apiKey" label="接口 Key" min-width="230">
+        <el-table-column prop="commissionRate" label="分成比例" width="210" align="center">
           <template slot-scope="scope">
-            <span class="api-key">{{ scope.row.apiKey }}</span>
-            <el-button type="text" size="mini" @click="copyText(scope.row.apiKey)">复制</el-button>
+            <el-input
+              v-model="scope.row.commissionRate"
+              type="number"
+              placeholder="请输入分成比例"
+              min="0"
+              :max="maxCommissionRate"
+              step="0.01"
+              @blur="handleInlineUpdate(scope.row, 'commissionRate')"
+            />
           </template>
         </el-table-column>
-        <el-table-column prop="dataCount" label="消耗数据量" min-width="120" align="right" />
-        <el-table-column prop="totalSpend" label="消耗金额" min-width="120" align="right">
-          <template slot-scope="scope">${{ formatMoney(scope.row.totalSpend) }}</template>
-        </el-table-column>
-        <el-table-column prop="lastReportTime" label="最后上报" min-width="180" align="center">
-          <template slot-scope="scope">{{ scope.row.lastReportTime || '-' }}</template>
-        </el-table-column>
-        <el-table-column prop="createTime" label="创建时间" min-width="200" align="center" />
-        <el-table-column label="操作" width="100" fixed="right" align="center">
-          <template slot-scope="scope">
-            <el-button type="text" @click="handleResetSecret(scope.row)">重置密钥</el-button>
-          </template>
-        </el-table-column>
+        <el-table-column prop="createTime" label="创建时间" width="210" align="center" />
       </el-table>
 
       <div class="table-footer">
-        <div class="table-total">共 {{ total }} 条</div>
         <el-pagination
           background
-          layout="sizes, prev, pager, next"
+          layout="total, sizes, prev, pager, next, jumper"
           :current-page.sync="queryParams.pageNum"
           :page-size.sync="queryParams.pageSize"
           :page-sizes="[20, 30, 50]"
@@ -146,7 +149,7 @@
 </template>
 
 <script>
-import { addAgent, listAgents, resetAgentSecret } from '@/api/agent'
+import { addAgent, listAgents, updateAgent } from '@/api/agent'
 
 function createDefaultForm() {
   return {
@@ -170,7 +173,7 @@ export default {
       loading: false,
       total: 0,
       credential: { apiKey: '', apiSecret: '' },
-      maxCommissionRate: 20,
+      maxCommissionRate: 100,
       queryParams: {
         keyword: '',
         pageNum: 1,
@@ -278,13 +281,20 @@ export default {
         })
       })
     },
-    handleResetSecret(row) {
-      this.$confirm(`重置后，代理 ${row.userName} 的旧 Secret 会立即失效，是否继续？`, '重置接口密钥', {
-        type: 'warning'
-      }).then(() => resetAgentSecret(row.agentId)).then(response => {
-        this.credential = { apiKey: row.apiKey, apiSecret: response.data.apiSecret }
-        this.credentialOpen = true
-      }).catch(() => {})
+    handleInlineUpdate(row, field) {
+      const previousValue = row[field]
+      const value = field === 'commissionRate' ? Number(row[field]) : String(row[field] || '').trim()
+      if (field === 'commissionRate' && (Number.isNaN(value) || value < 0 || value > this.maxCommissionRate)) {
+        row[field] = previousValue
+        this.$message.error(`分成比例必须介于0和${this.maxCommissionRate}之间`)
+        return
+      }
+      updateAgent({ agentId: row.agentId, [field]: value }).then(() => {
+        row[field] = value
+        this.$message.success('保存成功')
+      }).catch(() => {
+        row[field] = previousValue
+      })
     },
     copyText(value) {
       if (!value) return
@@ -300,7 +310,13 @@ export default {
 <style lang="scss" scoped>
 .agent-manage-page {
   .page-card {
-    border-radius: 18px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+    ::v-deep .el-card__body {
+      padding: 0;
+    }
   }
 
   .toolbar {
@@ -308,7 +324,7 @@ export default {
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    margin-bottom: 18px;
+    margin-bottom: 10px;
   }
 
   .toolbar-search {
@@ -316,23 +332,36 @@ export default {
     max-width: 100%;
   }
 
+  .agent-table {
+    width: 100%;
+  }
+
   .agent-table ::v-deep .el-table__header th {
     background: #f7f9fc;
-    color: #5d6785;
+    color: #657083;
     font-weight: 600;
+  }
+
+  .agent-table ::v-deep .el-table__cell {
+    height: 54px;
+    padding: 0;
+  }
+
+  .agent-table ::v-deep .el-input--mini .el-input__inner {
+    height: 30px;
+    line-height: 30px;
+  }
+
+  .agent-table ::v-deep .el-input__inner {
+    border-radius: 4px;
   }
 
   .table-footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 16px;
-    padding-top: 18px;
-  }
-
-  .table-total {
-    color: #7b849d;
-    font-size: 13px;
+    padding: 18px 0 0;
   }
 
   .agent-form {
@@ -349,11 +378,6 @@ export default {
   .commission-tip {
     color: #f56c6c;
     font-size: 13px;
-  }
-
-  .api-key {
-    margin-right: 8px;
-    font-family: monospace;
   }
 
   .credential-box {
