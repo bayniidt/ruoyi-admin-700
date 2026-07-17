@@ -17,6 +17,14 @@
         placeholder="请输入 PartnerStack Key"
       />
     </el-form-item>
+    <el-form-item v-if="form.isAdmin" label="推广链接设置" prop="promoBaseLink">
+      <el-input
+        v-model.trim="form.promoBaseLink"
+        maxlength="500"
+        show-word-limit
+        placeholder="请输入推广基础链接，例如 https://getstartedtiktok.partnerlinks.io/vsj2hf8hifmg"
+      />
+    </el-form-item>
     <el-form-item label="性别">
       <el-radio-group v-model="form.sex">
         <el-radio label="0">男</el-radio>
@@ -31,7 +39,7 @@
 </template>
 
 <script>
-import { updateUserProfile } from "@/api/system/user"
+import { updatePromoBaseLink, updateUserProfile } from "@/api/system/user"
 
 export default {
   props: {
@@ -66,6 +74,27 @@ export default {
         partnerStackKey: [
           { required: true, message: "PartnerStack Key不能为空", trigger: "blur" },
           { max: 100, message: "PartnerStack Key长度不能超过100个字符", trigger: "blur" }
+        ],
+        promoBaseLink: [
+          { max: 500, message: "推广链接长度不能超过500个字符", trigger: "blur" },
+          {
+            validator: (rule, value, callback) => {
+              if (!this.form.isAdmin) {
+                callback()
+                return
+              }
+              if (!value) {
+                callback(new Error("推广链接不能为空"))
+                return
+              }
+              if (!/^https?:\/\//.test(value)) {
+                callback(new Error("请输入正确的推广链接"))
+                return
+              }
+              callback()
+            },
+            trigger: "blur"
+          }
         ]
       }
     }
@@ -79,7 +108,9 @@ export default {
             phonenumber: user.phonenumber,
             email: user.email,
             sex: user.sex,
-            partnerStackKey: user.partnerStackKey || ""
+            partnerStackKey: user.partnerStackKey || "",
+            promoBaseLink: user.promoBaseLink || "",
+            isAdmin: !!user.isAdmin
           }
         }
       },
@@ -90,11 +121,16 @@ export default {
     submit() {
       this.$refs["form"].validate(valid => {
         if (valid) {
-          updateUserProfile(this.form).then(() => {
+          const requests = [updateUserProfile(this.form)]
+          if (this.form.isAdmin) {
+            requests.push(updatePromoBaseLink(this.form.promoBaseLink))
+          }
+          Promise.all(requests).then(() => {
             this.$modal.msgSuccess("修改成功")
             this.user.phonenumber = this.form.phonenumber
             this.user.email = this.form.email
             this.user.partnerStackKey = this.form.partnerStackKey
+            this.user.promoBaseLink = this.form.promoBaseLink
           })
         }
       })

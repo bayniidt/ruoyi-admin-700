@@ -62,7 +62,6 @@
 </template>
 
 <script>
-import { getCodeImg } from "@/api/login"
 import Cookies from "js-cookie"
 import { encrypt, decrypt } from '@/utils/jsencrypt'
 import defaultSettings from '@/settings'
@@ -92,7 +91,7 @@ export default {
       },
       loading: false,
       // 验证码开关
-      captchaEnabled: true,
+      captchaEnabled: false,
       // 注册开关
       register: false,
       redirect: undefined
@@ -107,18 +106,14 @@ export default {
     }
   },
   created() {
-    this.getCode()
     this.getCookie()
   },
   methods: {
     getCode() {
-      getCodeImg().then(res => {
-        this.captchaEnabled = res.captchaEnabled === undefined ? true : res.captchaEnabled
-        if (this.captchaEnabled) {
-          this.codeUrl = "data:image/gif;base64," + res.img
-          this.loginForm.uuid = res.uuid
-        }
-      })
+      this.captchaEnabled = false
+      this.codeUrl = ""
+      this.loginForm.code = ""
+      this.loginForm.uuid = ""
     },
     getCookie() {
       const username = Cookies.get("username")
@@ -147,9 +142,6 @@ export default {
             this.$router.push({ path: this.redirect || "/" }).catch(()=>{})
           }).catch(() => {
             this.loading = false
-            if (this.captchaEnabled) {
-              this.getCode()
-            }
           })
         }
       })

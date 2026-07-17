@@ -30,47 +30,37 @@
       </el-card>
     </div>
 
-    <el-card shadow="never" class="table-card">
-      <el-table :data="tableData" border v-loading="loading">
-        <el-table-column prop="agentName" label="客户Key" min-width="160" />
-        <el-table-column prop="actionKey" label="动作Key" min-width="180" />
-        <el-table-column prop="commissionRate" label="佣金比例" min-width="110" align="center">
+    <el-card shadow="never" class="table-card data-table-card">
+      <el-table :data="tableData" border size="small" v-loading="loading">
+        <el-table-column prop="agentName" label="下级名称" width="115" sortable />
+        <el-table-column prop="commissionRate" label="佣金比例" width="106" sortable>
           <template slot-scope="scope">
             <span>{{ scope.row.commissionRate }}%</span>
           </template>
         </el-table-column>
-        <el-table-column prop="subId" label="SUBID" min-width="120" />
-        <el-table-column prop="companyName" label="公司名称" min-width="180" />
-        <el-table-column prop="actionTypeLabel" label="动作类型" min-width="140" />
-        <el-table-column prop="statusLabel" label="归档状态" min-width="110" align="center">
-          <template slot-scope="scope">
-            <el-tag :type="scope.row.statusType" size="small">{{ scope.row.statusLabel }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="partnershipKey" label="合作关系Key" min-width="180" />
-        <el-table-column prop="createdAt" label="创建时间" min-width="180" align="center" />
-        <el-table-column prop="clicks" label="总点击" min-width="110" align="right" />
-        <el-table-column prop="uniqueClicks" label="不重复点击" min-width="120" align="right" />
-        <el-table-column prop="registrations" label="注册" min-width="90" align="right" />
-        <el-table-column prop="paidRegistrations" label="付费注册" min-width="110" align="right" />
-        <el-table-column prop="actions" label="动作" min-width="90" align="right" />
-        <el-table-column prop="validActions" label="有效动作" min-width="110" align="right" />
-        <el-table-column prop="spend" label="有效消耗" min-width="110" align="right">
+        <el-table-column prop="subId" label="SUBID" width="106" sortable />
+        <el-table-column prop="clicks" label="总点击" width="106" sortable />
+        <el-table-column prop="uniqueClicks" label="不重复点击" width="106" sortable />
+        <el-table-column prop="registrations" label="注册" width="106" sortable />
+        <el-table-column prop="paidRegistrations" label="付费注册" width="106" sortable />
+        <el-table-column prop="actions" label="动作" width="106" sortable />
+        <el-table-column prop="validActions" label="有效动作" width="106" sortable />
+        <el-table-column prop="spend" label="有效消耗" width="106" sortable>
           <template slot-scope="scope">
             <span>${{ scope.row.spend }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="downlineCommission" label="下级佣金" min-width="110" align="right">
+        <el-table-column prop="downlineCommission" label="下级佣金" width="106" sortable>
           <template slot-scope="scope">
             <span>${{ scope.row.downlineCommission }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="estimatedRevenue" label="预估收益" min-width="110" align="right">
+        <el-table-column prop="estimatedRevenue" label="预估收益" width="106" sortable>
           <template slot-scope="scope">
             <span>${{ scope.row.estimatedRevenue }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="estimatedProfit" label="预估利润" min-width="110" align="right">
+        <el-table-column prop="estimatedProfit" label="预估利润" width="106" sortable>
           <template slot-scope="scope">
             <span>${{ scope.row.estimatedProfit }}</span>
           </template>
@@ -320,6 +310,20 @@ export default {
   background: #f7f9fc;
   color: #5d6785;
   font-weight: 600;
+}
+
+.data-table-card ::v-deep .el-card__body {
+  padding: 20px;
+}
+
+.data-table-card ::v-deep .el-table th,
+.data-table-card ::v-deep .el-table td {
+  padding: 0;
+  height: 60px;
+}
+
+.data-table-card ::v-deep .el-table .cell {
+  line-height: 22px;
 }
 
 @media (max-width: 768px) {

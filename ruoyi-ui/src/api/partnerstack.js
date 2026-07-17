@@ -32,6 +32,22 @@ export function getPartnerStackTransactions(params) {
   })
 }
 
+export function getPartnerStackAdAccounts(params) {
+  return request({
+    url: '/partnerstack/ad-accounts',
+    method: 'get',
+    params
+  })
+}
+
+export function getPartnerStackTransactionDetails(params) {
+  return request({
+    url: '/partnerstack/transaction-details',
+    method: 'get',
+    params
+  })
+}
+
 export function getPartnerStackRewards(params) {
   return request({
     url: '/partnerstack/rewards',

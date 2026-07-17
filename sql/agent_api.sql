@@ -121,3 +121,28 @@ create table if not exists agent_usage (
   key idx_agent_reported (agent_id, reported_at),
   constraint fk_agent_usage_agent foreign key (agent_id) references agent_client (agent_id)
 ) engine=innodb comment='下级代理消耗上报';
+
+create table if not exists agent_subid (
+  id                 bigint(20)      not null auto_increment comment '主键ID',
+  subid              varchar(50)     not null                comment 'SubId',
+  name               varchar(100)    default null            comment '名称',
+  status             tinyint(1)      not null default 1      comment '状态',
+  source             varchar(100)    default null            comment '来源',
+  created_by         bigint(20)      not null                comment '拥有者用户ID',
+  created_by_name    varchar(30)     not null                comment '拥有者用户名',
+  promo_link         varchar(500)    default null            comment '推广链接',
+  bound_at           datetime        not null                comment '绑定时间',
+  create_by          varchar(64)     default ''              comment '创建者',
+  create_time        datetime                                comment '创建时间',
+  update_by          varchar(64)     default ''              comment '更新者',
+  update_time        datetime                                comment '更新时间',
+  remark             varchar(500)    default null            comment '备注',
+  primary key (id),
+  unique key uk_agent_subid_owner (created_by, subid),
+  key idx_agent_subid_owner (created_by)
+) engine=innodb comment='代理SubId绑定表';
+
+insert into sys_config(config_name, config_key, config_value, config_type, create_by, create_time, remark)
+select '代理SubId推广基础链接', 'agent.subid.base-link', '', 'N', 'admin', sysdate(),
+       '配置后用于生成SubId推广链接，例如 https://getstartedtiktok.partnerlinks.io/xxxx'
+where not exists (select 1 from sys_config where config_key = 'agent.subid.base-link');

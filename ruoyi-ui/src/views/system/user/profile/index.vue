@@ -89,7 +89,11 @@ export default {
   methods: {
     getUser() {
       getUserProfile().then(response => {
-        this.user = response.data
+        this.user = {
+          ...response.data,
+          isAdmin: response.isAdmin,
+          promoBaseLink: response.promoBaseLink || ""
+        }
         this.roleGroup = response.roleGroup
         this.postGroup = response.postGroup
       })

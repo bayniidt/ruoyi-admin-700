@@ -13,29 +13,15 @@
 
           <el-table :data="mySubIds" border v-loading="loading">
             <el-table-column prop="subId" label="SUBID" min-width="120" />
-            <el-table-column prop="companyName" label="公司名称" min-width="180" />
-            <el-table-column prop="partnerCustomerKey" label="PartnerStack客户Key" min-width="180" />
             <el-table-column label="推广链接" min-width="420">
               <template slot-scope="scope">
                 <div class="link-cell">
-                  <span class="link-text">{{ scope.row.promoLink }}</span>
-                  <el-button type="text" @click="copyText(scope.row.promoLink)">复制</el-button>
+                  <span class="link-text">{{ scope.row.promoLink || '-' }}</span>
+                  <el-button v-if="scope.row.promoLink" type="text" @click="copyText(scope.row.promoLink)">复制</el-button>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column prop="owner" label="客户编号" min-width="160" />
-            <el-table-column prop="sharedId" label="共享ID" min-width="140" />
-            <el-table-column prop="countryName" label="国家/地区" min-width="120" />
-            <el-table-column prop="paidLabel" label="付费状态" min-width="100" align="center">
-              <template slot-scope="scope">
-                <el-tag :type="scope.row.paidType" size="small">{{ scope.row.paidLabel }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="archiveLabel" label="归档状态" min-width="100" align="center">
-              <template slot-scope="scope">
-                <el-tag :type="scope.row.archiveType" size="small">{{ scope.row.archiveLabel }}</el-tag>
-              </template>
-            </el-table-column>
+            <el-table-column prop="ownerLabel" label="拥有者" min-width="160" />
             <el-table-column prop="bindTime" label="绑定时间" min-width="180" />
           </el-table>
         </el-tab-pane>
@@ -53,14 +39,12 @@
             <el-table-column label="推广链接" min-width="420">
               <template slot-scope="scope">
                 <div class="link-cell">
-                  <span class="link-text">{{ scope.row.promoLink }}</span>
-                  <el-button type="text" @click="copyText(scope.row.promoLink)">复制</el-button>
+                  <span class="link-text">{{ scope.row.promoLink || '-' }}</span>
+                  <el-button v-if="scope.row.promoLink" type="text" @click="copyText(scope.row.promoLink)">复制</el-button>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column prop="source" label="公司名称" min-width="160" />
-            <el-table-column prop="partnerCustomerKey" label="PartnerStack客户Key" min-width="180" />
-            <el-table-column prop="countryName" label="国家/地区" min-width="120" />
+            <el-table-column prop="sourceLabel" label="来源" min-width="180" />
             <el-table-column prop="bindTime" label="绑定时间" min-width="180" />
           </el-table>
         </el-tab-pane>
@@ -88,9 +72,7 @@
 </template>
 
 <script>
-import { getPartnerStackCustomers } from '@/api/partnerstack'
-
-const baseLink = 'https://getstartedtiktok.partnerlinks.io/k0p71lz923ri'
+import { createSubId, getDownlineSubIdList, getMySubIdList } from '@/api/agent-subid'
 
 function createForm() {
   return {
@@ -124,41 +106,31 @@ export default {
     async fetchCustomers() {
       this.loading = true
       try {
-        const { data } = await getPartnerStackCustomers({ limit: 100 })
-        const list = this.extractItems(data)
-        this.mySubIds = list.map((item, index) => this.toSubIdRow(item, index))
-        this.downlineSubIds = list.slice(0, 20).map((item, index) => ({
-          ...this.toSubIdRow(item, index),
-          source: item.name || item.customer_name || 'PartnerStack Customer'
-        }))
+        const [mineResponse, downlineResponse] = await Promise.all([
+          getMySubIdList(),
+          getDownlineSubIdList()
+        ])
+        this.mySubIds = this.extractRows(mineResponse)
+        this.downlineSubIds = this.extractRows(downlineResponse)
       } finally {
         this.loading = false
       }
     },
-    toSubIdRow(item, index) {
-      const customerKey = item.key || item.customer_key || `cus_${index + 1}`
-      const subId = customerKey.replace(/^cus_/i, '').slice(0, 12) || `SID${index + 1}`
+    toSubIdRow(item) {
       return {
-        subId,
-        promoLink: `${baseLink}?sid=${subId}`,
-        companyName: item.company?.name || '-',
-        partnerCustomerKey: item.key || '-',
-        owner: item.customer_key || item.shared_id || item.key || '未知客户',
-        sharedId: item.shared_id || '-',
-        countryName: this.toCountryName(item.country_iso),
-        paidLabel: item.has_paid ? '已付费' : '未付费',
-        paidType: item.has_paid ? 'success' : 'info',
-        archiveLabel: item.archived ? '已归档' : '生效中',
-        archiveType: item.archived ? 'info' : 'success',
-        bindTime: this.formatTime(item.created_at || item.createdAt)
+        subId: item.subid || item.subId || '-',
+        promoLink: item.promoLink || item.promo_link || '',
+        ownerLabel: item.createdByName || item.ownerLabel || '-',
+        sourceLabel: item.source || item.sourceLabel || '-',
+        bindTime: item.boundAt || item.bindTime || '-'
       }
     },
-    extractItems(data) {
-      if (!data) {
+    extractRows(response) {
+      if (!response) {
         return []
       }
-      const content = data.data || data
-      return Array.isArray(content) ? content : (content.items || content.results || [])
+      const rows = response.rows || (response.data && response.data.rows) || []
+      return rows.map(item => this.toSubIdRow(item))
     },
     openDialog() {
       this.form = createForm()
@@ -172,30 +144,14 @@ export default {
       this.form = createForm()
     },
     submitForm() {
-      this.$refs.form.validate(valid => {
+      this.$refs.form.validate(async valid => {
         if (!valid) {
           return
         }
-        const exists = this.mySubIds.some(item => item.subId.toLowerCase() === this.form.subId.toLowerCase())
-        if (exists) {
-          this.$message.error('该 SubId 已存在')
-          return
-        }
-        this.mySubIds.unshift({
-          subId: this.form.subId,
-          promoLink: `${baseLink}?sid=${this.form.subId}`,
-          partnerCustomerKey: '-',
-          owner: 'Manual',
-          sharedId: '-',
-          countryName: '-',
-          paidLabel: '未付费',
-          paidType: 'info',
-          archiveLabel: '生效中',
-          archiveType: 'success',
-          bindTime: this.parseCurrentTime()
-        })
+        await createSubId({ subId: this.form.subId })
         this.open = false
         this.$message.success('SubId 已加入当前列表')
+        this.fetchCustomers()
       })
     },
     copyText(text) {
@@ -220,33 +176,6 @@ export default {
       document.execCommand('copy')
       document.body.removeChild(textarea)
       this.$message.success('已复制')
-    },
-    parseCurrentTime() {
-      const now = new Date()
-      const pad = value => `${value}`.padStart(2, '0')
-      return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
-    },
-    formatTime(value) {
-      if (!value) {
-        return '-'
-      }
-      const date = new Date(Number(value))
-      if (Number.isNaN(date.getTime())) {
-        return '-'
-      }
-      const pad = num => `${num}`.padStart(2, '0')
-      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-    },
-    toCountryName(code) {
-      const map = {
-        US: '美国',
-        PH: '菲律宾',
-        TH: '泰国',
-        HK: '中国香港',
-        GB: '英国',
-        CA: '加拿大'
-      }
-      return map[code] || code || '-'
     }
   }
 }

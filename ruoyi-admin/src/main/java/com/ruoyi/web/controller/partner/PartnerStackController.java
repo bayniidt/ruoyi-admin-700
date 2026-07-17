@@ -131,7 +131,13 @@ public class PartnerStackController extends BaseController
             @RequestParam(required = false) String endingBefore)
     {
         PartnerAccess access = scopedPartnerAccess();
-        return this.proxyList("/customers", buildCommonParams(minCreated, maxCreated, limit, startingAfter, endingBefore), access);
+        AjaxResult result = this.proxyList("/customers",
+                buildCommonParams(minCreated, maxCreated, limit, startingAfter, endingBefore), access);
+        if (result.isSuccess())
+        {
+            attachPromoLinks(result);
+        }
+        return result;
     }
 
     @GetMapping("/actions")
@@ -155,12 +161,161 @@ public class PartnerStackController extends BaseController
     @GetMapping("/transactions")
     public AjaxResult transactions(@RequestParam(required = false) Long minCreated,
             @RequestParam(required = false) Long maxCreated,
+            @RequestParam(required = false) String subId,
             @RequestParam(required = false, defaultValue = "100") Integer limit,
             @RequestParam(required = false) String startingAfter,
             @RequestParam(required = false) String endingBefore)
     {
         PartnerAccess access = scopedPartnerAccess();
-        return this.proxyList("/transactions", buildCommonParams(minCreated, maxCreated, limit, startingAfter, endingBefore), access);
+        AjaxResult result = this.proxyList("/transactions",
+                buildCommonParams(minCreated, maxCreated, limit, startingAfter, endingBefore), access);
+        if (result.isSuccess() && StringUtils.hasText(subId))
+        {
+            filterListResultBySubId(result, subId, access.fallbackSubId());
+        }
+        return result;
+    }
+
+    @GetMapping("/transaction-details")
+    public AjaxResult transactionDetails(@RequestParam String customerKey,
+            @RequestParam(required = false) String subId)
+    {
+        if (!StringUtils.hasText(customerKey))
+        {
+            return error("广告户ID不能为空");
+        }
+        PartnerAccess access = scopedPartnerAccess();
+        try
+        {
+            Scope scope = access.scope();
+            if (scope.requiresCustomerResolution())
+            {
+                JSONArray customerSource = fetchAllItems("/customers", new LinkedHashMap<>(), access.token());
+                scope = resolveScope(scope, customerSource);
+            }
+            JSONArray transactions = filterItems(fetchAllItems("/transactions",
+                    buildCommonParams(null, null, PARTNERSTACK_PAGE_SIZE, null, null), access.token()), scope, subId,
+                    null, null, access.fallbackSubId());
+            List<JSONObject> rows = new ArrayList<>();
+            for (Object item : transactions)
+            {
+                if (!(item instanceof JSONObject transaction))
+                {
+                    continue;
+                }
+                String currentCustomerKey = extractCustomerKey(transaction);
+                if (!customerKey.equals(currentCustomerKey))
+                {
+                    continue;
+                }
+                JSONObject row = new JSONObject();
+                row.put("transactionId", transaction.getString("key"));
+                row.put("amountSUM", cents(transaction.containsKey("amount_usd")
+                        ? transaction.get("amount_usd") : transaction.get("amount")));
+                row.put("transactionTime", formatDateTime(transaction.getLong("created_at")));
+                row.put("status", transaction.getBooleanValue("archived") ? "已停用" : "注册");
+                rows.add(row);
+            }
+            rows.sort(Comparator.comparing((JSONObject row) -> row.getString("transactionTime"),
+                    Comparator.nullsLast(Comparator.reverseOrder())));
+            BigDecimal totalAmount = rows.stream()
+                    .map(row -> row.getBigDecimal("amountSUM"))
+                    .filter(java.util.Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            return AjaxResult.success(new JSONObject()
+                    .fluentPut("total", rows.size())
+                    .fluentPut("totalAmountSUM", money(totalAmount))
+                    .fluentPut("rows", rows));
+        }
+        catch (PartnerStackApiException e)
+        {
+            logger.error("PartnerStack transaction details request failed: {}", e.getMessage());
+            return AjaxResult.error(e.getStatus(), e.getMessage());
+        }
+    }
+
+    @GetMapping("/ad-accounts")
+    public AjaxResult adAccounts(@RequestParam(required = false) Long minCreated,
+            @RequestParam(required = false) Long maxCreated,
+            @RequestParam(required = false) String subId,
+            @RequestParam(required = false) String customerKey,
+            @RequestParam(required = false, defaultValue = "0") BigDecimal minAmountSUM,
+            @RequestParam(required = false, defaultValue = "1") Integer pageNum,
+            @RequestParam(required = false, defaultValue = "10") Integer pageSize)
+    {
+        if (minCreated != null && maxCreated != null && minCreated > maxCreated)
+        {
+            return error("开始时间不能晚于结束时间");
+        }
+
+        PartnerAccess access = scopedPartnerAccess();
+        try
+        {
+            Scope scope = access.scope();
+            int safePageNum = pageNum == null || pageNum < 1 ? 1 : pageNum;
+            int safePageSize = pageSize == null || pageSize < 1 ? 10 : Math.min(pageSize, 100);
+            int fetchLimit = Math.min(safePageNum * safePageSize, PARTNERSTACK_PAGE_SIZE);
+            JSONArray customerSource;
+            if (scope.requiresCustomerResolution())
+            {
+                customerSource = fetchAllItems("/customers", new LinkedHashMap<>(), access.token());
+                scope = resolveScope(scope, customerSource);
+            }
+            else
+            {
+                JSONObject body = requestPartnerStack("/customers",
+                        buildCommonParams(minCreated, maxCreated, fetchLimit, null, null), access.token());
+                JSONObject data = body.getJSONObject("data");
+                customerSource = data == null ? new JSONArray() : data.getJSONArray("items");
+                if (customerSource == null)
+                {
+                    customerSource = new JSONArray();
+                }
+            }
+            JSONArray customers = filterItems(customerSource, scope, subId, minCreated, maxCreated,
+                    access.fallbackSubId());
+            List<JSONObject> rows = new ArrayList<>();
+            for (Object item : customers)
+            {
+                if (!(item instanceof JSONObject customer))
+                {
+                    continue;
+                }
+                String currentCustomerKey = customer.getString("key");
+                if (StringUtils.hasText(customerKey) && !containsIgnoreCase(currentCustomerKey, customerKey))
+                {
+                    continue;
+                }
+                BigDecimal amountSum = decimalFromCents(customer.getBigDecimal("amount_sum"));
+                if (amountSum.compareTo(minAmountSUM == null ? BigDecimal.ZERO : minAmountSUM) < 0)
+                {
+                    continue;
+                }
+                JSONObject row = new JSONObject();
+                row.put("customerKey", currentCustomerKey);
+                row.put("subId", firstSubId(customer) != null ? firstSubId(customer) : access.fallbackSubId());
+                row.put("countryIso", StringUtils.hasText(customer.getString("country_iso"))
+                        ? customer.getString("country_iso") : "-");
+                row.put("hasPaid", customer.getBooleanValue("has_paid") ? 1 : 0);
+                row.put("updatedAt", formatIsoDateTime(customer.getLong("updated_at")));
+                row.put("createdAt", formatIsoDateTime(customer.getLong("created_at")));
+                row.put("amountSUM", amountSum.setScale(2, RoundingMode.HALF_UP));
+                rows.add(row);
+            }
+            rows.sort(Comparator.comparing((JSONObject row) -> row.getString("updatedAt"),
+                    Comparator.nullsLast(Comparator.reverseOrder())));
+            int fromIndex = Math.min((safePageNum - 1) * safePageSize, rows.size());
+            int toIndex = Math.min(fromIndex + safePageSize, rows.size());
+            List<JSONObject> pagedRows = rows.subList(fromIndex, toIndex);
+            return AjaxResult.success(new JSONObject()
+                    .fluentPut("total", rows.size())
+                    .fluentPut("rows", pagedRows));
+        }
+        catch (PartnerStackApiException e)
+        {
+            logger.error("PartnerStack ad accounts request failed: {}", e.getMessage());
+            return AjaxResult.error(e.getStatus(), e.getMessage());
+        }
     }
 
     @GetMapping("/rewards")
@@ -300,6 +455,114 @@ public class PartnerStackController extends BaseController
             return customer.getString("key");
         }
         return object.getString("key");
+    }
+
+    private void attachPromoLinks(AjaxResult result)
+    {
+        Object body = result.get(AjaxResult.DATA_TAG);
+        if (!(body instanceof JSONObject container))
+        {
+            return;
+        }
+        JSONObject data = container.getJSONObject("data");
+        if (data == null)
+        {
+            return;
+        }
+        JSONArray items = data.getJSONArray("items");
+        if (items == null)
+        {
+            return;
+        }
+        for (Object item : items)
+        {
+            if (item instanceof JSONObject customer)
+            {
+                customer.put("promoLink", extractPromoLink(customer));
+            }
+        }
+    }
+
+    private void filterListResultBySubId(AjaxResult result, String subId, String fallbackSubId)
+    {
+        Object body = result.get(AjaxResult.DATA_TAG);
+        if (!(body instanceof JSONObject container))
+        {
+            return;
+        }
+        JSONObject data = container.getJSONObject("data");
+        if (data == null)
+        {
+            return;
+        }
+        JSONArray items = data.getJSONArray("items");
+        if (items != null)
+        {
+            items.removeIf(item -> !(item instanceof JSONObject object) || !matchesSubId(object, subId, fallbackSubId));
+        }
+    }
+
+    private String extractPromoLink(JSONObject customer)
+    {
+        String[] directFields = { "promo_link", "promoLink", "partner_link", "partnerLink", "tracking_link",
+                "trackingLink", "referral_link", "referralLink", "share_url", "shareUrl", "url" };
+        for (String field : directFields)
+        {
+            String value = customer.getString(field);
+            if (looksLikePromoLink(value))
+            {
+                return value;
+            }
+        }
+
+        for (String nestedField : new String[] { "link", "links", "referral_link", "referralLink", "partner_link",
+                "partnerLink", "promo_link", "promoLink" })
+        {
+            String value = extractPromoLinkValue(customer.get(nestedField));
+            if (looksLikePromoLink(value))
+            {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String extractPromoLinkValue(Object value)
+    {
+        if (value instanceof String text)
+        {
+            return text;
+        }
+        if (value instanceof JSONObject object)
+        {
+            for (String field : new String[] { "url", "link", "value", "short_link", "shortLink", "tracking_link",
+                    "trackingLink", "promo_link", "promoLink" })
+            {
+                String text = object.getString(field);
+                if (StringUtils.hasText(text))
+                {
+                    return text;
+                }
+            }
+        }
+        if (value instanceof JSONArray array)
+        {
+            for (Object item : array)
+            {
+                String text = extractPromoLinkValue(item);
+                if (StringUtils.hasText(text))
+                {
+                    return text;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean looksLikePromoLink(String value)
+    {
+        return StringUtils.hasText(value)
+                && (value.startsWith("http://") || value.startsWith("https://"));
     }
 
     private JSONArray fetchAllItems(String path, Map<String, Object> sourceParams, String accessToken)
@@ -491,6 +754,38 @@ public class PartnerStackController extends BaseController
     {
         return StringUtils.hasText(value) && StringUtils.hasText(query)
                 && value.toLowerCase().contains(query.trim().toLowerCase());
+    }
+
+    private BigDecimal decimalFromCents(BigDecimal value)
+    {
+        if (value == null)
+        {
+            return BigDecimal.ZERO;
+        }
+        return value.divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+    }
+
+    private String formatIsoDateTime(Long value)
+    {
+        if (value == null || value <= 0)
+        {
+            return null;
+        }
+        java.time.OffsetDateTime dateTime = java.time.Instant.ofEpochMilli(value)
+                .atOffset(java.time.ZoneOffset.ofHours(8));
+        return dateTime.toString();
+    }
+
+    private String formatDateTime(Long value)
+    {
+        if (value == null || value <= 0)
+        {
+            return null;
+        }
+        java.time.LocalDateTime dateTime = java.time.Instant.ofEpochMilli(value)
+                .atZone(java.time.ZoneId.of("Asia/Shanghai"))
+                .toLocalDateTime();
+        return dateTime.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
     private JSONObject buildDashboard(String partnerStackKey, String fallbackSubId, JSONArray customers,
