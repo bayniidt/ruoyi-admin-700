@@ -6,7 +6,6 @@ import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.system.domain.AgentSubId;
@@ -15,17 +14,14 @@ import com.ruoyi.system.mapper.AgentSubIdMapper;
 @Service
 public class AgentSubIdService
 {
+    private static final String FIXED_PROMO_BASE_LINK = "https://getstartedtiktok.partnerlinks.io/vsj2hf8hifmg";
+
     private final AgentSubIdMapper agentSubIdMapper;
-    private final ISysUserService sysUserService;
-    private final ISysConfigService sysConfigService;
     private final JdbcTemplate jdbcTemplate;
 
-    public AgentSubIdService(AgentSubIdMapper agentSubIdMapper, ISysUserService sysUserService,
-            ISysConfigService sysConfigService, JdbcTemplate jdbcTemplate)
+    public AgentSubIdService(AgentSubIdMapper agentSubIdMapper, JdbcTemplate jdbcTemplate)
     {
         this.agentSubIdMapper = agentSubIdMapper;
-        this.sysUserService = sysUserService;
-        this.sysConfigService = sysConfigService;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -58,7 +54,7 @@ public class AgentSubIdService
                         + "where not exists (select 1 from sys_config where config_key = ?)",
                 "代理SubId推广基础链接",
                 "agent.subid.base-link",
-                "",
+                FIXED_PROMO_BASE_LINK,
                 "N",
                 "admin",
                 "配置后用于生成SubId推广链接，例如 https://getstartedtiktok.partnerlinks.io/xxxx",
@@ -125,23 +121,7 @@ public class AgentSubIdService
 
     private String resolveBaseLink(Long userId)
     {
-        String baseLink = StringUtils.trim(sysConfigService.selectConfigByKey("agent.subid.base-link"));
-        if (StringUtils.isEmpty(baseLink))
-        {
-            SysUser user = sysUserService.selectUserById(userId);
-            String userValue = user == null ? null : StringUtils.trim(user.getPartnerStackKey());
-            if (looksLikeHttpUrl(userValue))
-            {
-                baseLink = userValue;
-            }
-        }
-        return baseLink;
-    }
-
-    private boolean looksLikeHttpUrl(String value)
-    {
-        return StringUtils.isNotEmpty(value)
-                && (value.startsWith("http://") || value.startsWith("https://"));
+        return FIXED_PROMO_BASE_LINK;
     }
 
     private void fillPromoLinks(List<AgentSubId> list, Long userId)

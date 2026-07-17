@@ -87,23 +87,6 @@ export function updateUserProfile(data) {
   })
 }
 
-// 绑定 PartnerStack Key
-export function updatePartnerStackKey(partnerStackKey) {
-  return request({
-    url: '/system/user/profile/partnerStackKey',
-    method: 'put',
-    data: { partnerStackKey }
-  })
-}
-
-export function updatePromoBaseLink(promoBaseLink) {
-  return request({
-    url: '/system/user/profile/promoBaseLink',
-    method: 'put',
-    data: { promoBaseLink }
-  })
-}
-
 // 用户密码重置
 export function updateUserPwd(oldPassword, newPassword) {
   const data = {

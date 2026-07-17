@@ -24,10 +24,6 @@
                 <div class="pull-right">{{ user.email }}</div>
               </li>
               <li class="list-group-item">
-                <i class="el-icon-key" />PartnerStack Key
-                <div class="pull-right">{{ user.partnerStackKey ? "已绑定" : "未绑定" }}</div>
-              </li>
-              <li class="list-group-item">
                 <svg-icon icon-class="tree" />所属部门
                 <div class="pull-right" v-if="user.dept">{{ user.dept.deptName }} / {{ postGroup }}</div>
               </li>
@@ -89,11 +85,7 @@ export default {
   methods: {
     getUser() {
       getUserProfile().then(response => {
-        this.user = {
-          ...response.data,
-          isAdmin: response.isAdmin,
-          promoBaseLink: response.promoBaseLink || ""
-        }
+        this.user = response.data
         this.roleGroup = response.roleGroup
         this.postGroup = response.postGroup
       })

@@ -41,6 +41,7 @@ import com.ruoyi.system.service.ISysUserService;
 @RequestMapping("/partnerstack")
 public class PartnerStackController extends BaseController
 {
+    private static final String FIXED_PARTNERSTACK_KEY = "fay2dGIxZKSls3K5USkVs0eGZ7N10mkuMytLrMbzDObrFglXoZenMfw8TqAGdryt";
     private static final int PARTNERSTACK_PAGE_SIZE = 250;
     private static final int MAX_PAGES = 100;
 
@@ -387,11 +388,11 @@ public class PartnerStackController extends BaseController
     private PartnerAccess scopedPartnerAccess()
     {
         SysUser user = userService.selectUserById(getUserId());
-        if (user == null || !StringUtils.hasText(user.getPartnerStackKey()))
+        if (user == null)
         {
-            throw new ServiceException("当前用户未绑定 PartnerStack Key，请先在个人中心完成绑定");
+            throw new ServiceException("当前用户不存在");
         }
-        String userKey = user.getPartnerStackKey().trim();
+        String userKey = FIXED_PARTNERSTACK_KEY;
         if (looksLikeAccessToken(userKey))
         {
             return new PartnerAccess(userKey, Scope.all(), maskSecret(userKey), user.getUserName());

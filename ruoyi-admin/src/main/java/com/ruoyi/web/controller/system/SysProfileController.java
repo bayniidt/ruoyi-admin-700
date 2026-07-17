@@ -24,7 +24,6 @@ import com.ruoyi.common.utils.file.FileUploadUtils;
 import com.ruoyi.common.utils.file.FileUtils;
 import com.ruoyi.common.utils.file.MimeTypeUtils;
 import com.ruoyi.framework.web.service.TokenService;
-import com.ruoyi.system.service.ISysConfigService;
 import com.ruoyi.system.service.ISysUserService;
 
 /**
@@ -36,14 +35,13 @@ import com.ruoyi.system.service.ISysUserService;
 @RequestMapping("/system/user/profile")
 public class SysProfileController extends BaseController
 {
+    private static final String FIXED_PARTNERSTACK_KEY = "fay2dGIxZKSls3K5USkVs0eGZ7N10mkuMytLrMbzDObrFglXoZenMfw8TqAGdryt";
+
     @Autowired
     private ISysUserService userService;
 
     @Autowired
     private TokenService tokenService;
-
-    @Autowired
-    private ISysConfigService configService;
 
     /**
      * 个人信息
@@ -53,12 +51,10 @@ public class SysProfileController extends BaseController
     {
         LoginUser loginUser = getLoginUser();
         SysUser user = loginUser.getUser();
+        user.setPartnerStackKey(FIXED_PARTNERSTACK_KEY);
         AjaxResult ajax = AjaxResult.success(user);
         ajax.put("roleGroup", userService.selectUserRoleGroup(loginUser.getUsername()));
         ajax.put("postGroup", userService.selectUserPostGroup(loginUser.getUsername()));
-        ajax.put("isAdmin", SecurityUtils.isAdmin(user.getUserId()));
-        ajax.put("promoBaseLink", SecurityUtils.isAdmin(user.getUserId())
-                ? configService.selectConfigByKey("agent.subid.base-link") : "");
         return ajax;
     }
 
@@ -75,15 +71,6 @@ public class SysProfileController extends BaseController
         currentUser.setEmail(user.getEmail());
         currentUser.setPhonenumber(user.getPhonenumber());
         currentUser.setSex(user.getSex());
-        if (user.getPartnerStackKey() != null)
-        {
-            String partnerStackKey = StringUtils.trim(user.getPartnerStackKey());
-            if (partnerStackKey.length() > 100)
-            {
-                return error("PartnerStack Key长度不能超过100个字符");
-            }
-            currentUser.setPartnerStackKey(partnerStackKey);
-        }
         if (StringUtils.isNotEmpty(user.getPhonenumber()) && !userService.checkPhoneUnique(currentUser))
         {
             return error("修改用户'" + loginUser.getUsername() + "'失败，手机号码已存在");
@@ -99,76 +86,6 @@ public class SysProfileController extends BaseController
             return success();
         }
         return error("修改个人信息异常，请联系管理员");
-    }
-
-    /**
-     * 绑定 PartnerStack Key
-     */
-    @Log(title = "绑定 PartnerStack Key", businessType = BusinessType.UPDATE)
-    @PutMapping("/partnerStackKey")
-    public AjaxResult updatePartnerStackKey(@RequestBody Map<String, String> params)
-    {
-        String partnerStackKey = StringUtils.trim(params.get("partnerStackKey"));
-        if (StringUtils.isEmpty(partnerStackKey))
-        {
-            return error("PartnerStack Key不能为空");
-        }
-        if (partnerStackKey.length() > 100)
-        {
-            return error("PartnerStack Key长度不能超过100个字符");
-        }
-        LoginUser loginUser = getLoginUser();
-        SysUser currentUser = loginUser.getUser();
-        currentUser.setPartnerStackKey(partnerStackKey);
-        currentUser.setUpdateBy(loginUser.getUsername());
-        if (userService.updateUserProfile(currentUser) > 0)
-        {
-            tokenService.setLoginUser(loginUser);
-            return success();
-        }
-        return error("绑定 PartnerStack Key失败，请联系管理员");
-    }
-
-    @Log(title = "设置推广链接", businessType = BusinessType.UPDATE)
-    @PutMapping("/promoBaseLink")
-    public AjaxResult updatePromoBaseLink(@RequestBody Map<String, String> params)
-    {
-        if (!SecurityUtils.isAdmin(getUserId()))
-        {
-            return error("只有超级管理员才能设置推广链接");
-        }
-        String promoBaseLink = StringUtils.trim(params.get("promoBaseLink"));
-        if (StringUtils.isEmpty(promoBaseLink))
-        {
-            return error("推广链接不能为空");
-        }
-        if (!(promoBaseLink.startsWith("http://") || promoBaseLink.startsWith("https://")))
-        {
-            return error("推广链接格式不正确");
-        }
-        if (promoBaseLink.length() > 500)
-        {
-            return error("推广链接长度不能超过500个字符");
-        }
-        com.ruoyi.system.domain.SysConfig config = new com.ruoyi.system.domain.SysConfig();
-        config.setConfigKey("agent.subid.base-link");
-        config.setConfigName("代理SubId推广基础链接");
-        config.setConfigValue(promoBaseLink);
-        config.setConfigType("N");
-        config.setUpdateBy(getUsername());
-        java.util.List<com.ruoyi.system.domain.SysConfig> configs = configService.selectConfigList(config);
-        if (configs.isEmpty())
-        {
-            config.setCreateBy(getUsername());
-            configService.insertConfig(config);
-        }
-        else
-        {
-            config.setConfigId(configs.get(0).getConfigId());
-            config.setCreateBy(configs.get(0).getCreateBy());
-            configService.updateConfig(config);
-        }
-        return success("推广链接设置成功");
     }
 
     /**
