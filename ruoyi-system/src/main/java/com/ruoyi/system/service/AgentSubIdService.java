@@ -1,7 +1,9 @@
 package com.ruoyi.system.service;
 
+import jakarta.annotation.PostConstruct;
 import java.util.Date;
 import java.util.List;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.ruoyi.common.core.domain.entity.SysUser;
@@ -16,13 +18,51 @@ public class AgentSubIdService
     private final AgentSubIdMapper agentSubIdMapper;
     private final ISysUserService sysUserService;
     private final ISysConfigService sysConfigService;
+    private final JdbcTemplate jdbcTemplate;
 
     public AgentSubIdService(AgentSubIdMapper agentSubIdMapper, ISysUserService sysUserService,
-            ISysConfigService sysConfigService)
+            ISysConfigService sysConfigService, JdbcTemplate jdbcTemplate)
     {
         this.agentSubIdMapper = agentSubIdMapper;
         this.sysUserService = sysUserService;
         this.sysConfigService = sysConfigService;
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @PostConstruct
+    public void ensureSchema()
+    {
+        jdbcTemplate.execute(
+                "create table if not exists agent_subid ("
+                        + "id bigint(20) not null auto_increment comment '主键ID',"
+                        + "subid varchar(50) not null comment 'SubId',"
+                        + "name varchar(100) default null comment '名称',"
+                        + "status tinyint(1) not null default 1 comment '状态',"
+                        + "source varchar(100) default null comment '来源',"
+                        + "created_by bigint(20) not null comment '拥有者用户ID',"
+                        + "created_by_name varchar(30) not null comment '拥有者用户名',"
+                        + "promo_link varchar(500) default null comment '推广链接',"
+                        + "bound_at datetime not null comment '绑定时间',"
+                        + "create_by varchar(64) default '' comment '创建者',"
+                        + "create_time datetime comment '创建时间',"
+                        + "update_by varchar(64) default '' comment '更新者',"
+                        + "update_time datetime comment '更新时间',"
+                        + "remark varchar(500) default null comment '备注',"
+                        + "primary key (id),"
+                        + "unique key uk_agent_subid_owner (created_by, subid),"
+                        + "key idx_agent_subid_owner (created_by)"
+                        + ") engine=innodb comment='代理SubId绑定表'");
+        jdbcTemplate.update(
+                "insert into sys_config(config_name, config_key, config_value, config_type, create_by, create_time, remark) "
+                        + "select ?, ?, ?, ?, ?, sysdate(), ? from dual "
+                        + "where not exists (select 1 from sys_config where config_key = ?)",
+                "代理SubId推广基础链接",
+                "agent.subid.base-link",
+                "",
+                "N",
+                "admin",
+                "配置后用于生成SubId推广链接，例如 https://getstartedtiktok.partnerlinks.io/xxxx",
+                "agent.subid.base-link");
     }
 
     public List<AgentSubId> selectMySubIdList(Long userId)
