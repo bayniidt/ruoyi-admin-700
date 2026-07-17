@@ -178,8 +178,8 @@ public class PartnerStackController extends BaseController
     }
 
     @GetMapping("/transaction-details")
-    public AjaxResult transactionDetails(@RequestParam String customerKey,
-            @RequestParam(required = false) String subId)
+    public AjaxResult transactionDetails(@RequestParam("customerKey") String customerKey,
+            @RequestParam(value = "subId", required = false) String subId)
     {
         if (!StringUtils.hasText(customerKey))
         {
@@ -194,30 +194,41 @@ public class PartnerStackController extends BaseController
                 JSONArray customerSource = fetchAllItems("/customers", new LinkedHashMap<>(), access.token());
                 scope = resolveScope(scope, customerSource);
             }
+            JSONArray actions = filterItems(fetchAllItems("/actions",
+                    buildCommonParams(null, null, PARTNERSTACK_PAGE_SIZE, null, null), access.token()), scope, subId,
+                    null, null, access.fallbackSubId());
             JSONArray transactions = filterItems(fetchAllItems("/transactions",
                     buildCommonParams(null, null, PARTNERSTACK_PAGE_SIZE, null, null), access.token()), scope, subId,
                     null, null, access.fallbackSubId());
             List<JSONObject> rows = new ArrayList<>();
+            rows.add(buildTimelineRow("customer_created", customerKey, BigDecimal.ZERO, null));
+            for (Object item : actions)
+            {
+                if (!(item instanceof JSONObject action))
+                {
+                    continue;
+                }
+                if (!customerKey.equals(extractCustomerKey(action)))
+                {
+                    continue;
+                }
+                rows.add(buildTimelineRow("action_created", action.getString("key"), BigDecimal.ZERO, action));
+            }
             for (Object item : transactions)
             {
                 if (!(item instanceof JSONObject transaction))
                 {
                     continue;
                 }
-                String currentCustomerKey = extractCustomerKey(transaction);
-                if (!customerKey.equals(currentCustomerKey))
+                if (!customerKey.equals(extractCustomerKey(transaction)))
                 {
                     continue;
                 }
-                JSONObject row = new JSONObject();
-                row.put("transactionId", transaction.getString("key"));
-                row.put("amountSUM", cents(transaction.containsKey("amount_usd")
-                        ? transaction.get("amount_usd") : transaction.get("amount")));
-                row.put("transactionTime", formatDateTime(transaction.getLong("created_at")));
-                row.put("status", transaction.getBooleanValue("archived") ? "已停用" : "注册");
-                rows.add(row);
+                BigDecimal amount = cents(transaction.containsKey("amount_usd")
+                        ? transaction.get("amount_usd") : transaction.get("amount"));
+                rows.add(buildTimelineRow("transaction_created", transaction.getString("key"), amount, transaction));
             }
-            rows.sort(Comparator.comparing((JSONObject row) -> row.getString("transactionTime"),
+            rows.sort(Comparator.comparing((JSONObject row) -> row.getString("eventTime"),
                     Comparator.nullsLast(Comparator.reverseOrder())));
             BigDecimal totalAmount = rows.stream()
                     .map(row -> row.getBigDecimal("amountSUM"))
@@ -294,10 +305,14 @@ public class PartnerStackController extends BaseController
                 }
                 JSONObject row = new JSONObject();
                 row.put("customerKey", currentCustomerKey);
+                row.put("contact", StringUtils.hasText(customer.getString("customer_key"))
+                        ? customer.getString("customer_key") : currentCustomerKey);
                 row.put("subId", firstSubId(customer) != null ? firstSubId(customer) : access.fallbackSubId());
-                row.put("countryIso", StringUtils.hasText(customer.getString("country_iso"))
-                        ? customer.getString("country_iso") : "-");
+                row.put("countryIso", extractCountry(customer));
                 row.put("hasPaid", customer.getBooleanValue("has_paid") ? 1 : 0);
+                row.put("sourceType", "推荐链接");
+                row.put("totalRevenue", decimalFromCents(customer.getBigDecimal("total_revenue")));
+                row.put("createdDate", formatDateOnly(customer.getLong("created_at")));
                 row.put("updatedAt", formatIsoDateTime(customer.getLong("updated_at")));
                 row.put("createdAt", formatIsoDateTime(customer.getLong("created_at")));
                 row.put("amountSUM", amountSum.setScale(2, RoundingMode.HALF_UP));
@@ -613,6 +628,11 @@ public class PartnerStackController extends BaseController
     {
         String query = buildQuery(params);
         String url = baseUrl + path + (query.isEmpty() ? "" : "?" + query);
+        return executePartnerStackRequest(url, accessToken);
+    }
+
+    private JSONObject executePartnerStackRequest(String url, String accessToken)
+    {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(Duration.ofSeconds(20))
@@ -787,6 +807,68 @@ public class PartnerStackController extends BaseController
                 .atZone(java.time.ZoneId.of("Asia/Shanghai"))
                 .toLocalDateTime();
         return dateTime.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    private String formatDateOnly(Long value)
+    {
+        if (value == null || value <= 0)
+        {
+            return null;
+        }
+        java.time.LocalDate date = java.time.Instant.ofEpochMilli(value)
+                .atZone(java.time.ZoneId.of("Asia/Shanghai"))
+                .toLocalDate();
+        return date.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.ENGLISH));
+    }
+
+    private String extractCountry(JSONObject customer)
+    {
+        if (customer == null)
+        {
+            return "-";
+        }
+        String country = customer.getString("country_iso");
+        if (StringUtils.hasText(country))
+        {
+            return country;
+        }
+        JSONObject fieldData = customer.getJSONObject("field_data");
+        if (fieldData != null && StringUtils.hasText(fieldData.getString("country_iso")))
+        {
+            return fieldData.getString("country_iso");
+        }
+        return "-";
+    }
+
+    private JSONObject buildTimelineRow(String type, String key, BigDecimal amount, JSONObject source)
+    {
+        JSONObject row = new JSONObject();
+        row.put("eventId", key);
+        row.put("amountSUM", money(amount == null ? BigDecimal.ZERO : amount));
+        if (source == null)
+        {
+            row.put("eventTime", null);
+            row.put("description", "已创建为客户");
+            row.put("eventType", type);
+            return row;
+        }
+        row.put("eventTime", formatDateTime(source.getLong("created_at")));
+        row.put("eventType", type);
+        if ("transaction_created".equals(type))
+        {
+            row.put("description", "已购买 $" + money(amount) + " USD");
+            return row;
+        }
+        String actionType = source.getString("type");
+        if ("sign_up".equals(actionType))
+        {
+            row.put("description", "执行了操作“sign_up”");
+        }
+        else
+        {
+            row.put("description", "执行了操作“" + (StringUtils.hasText(actionType) ? actionType : "-") + "”");
+        }
+        return row;
     }
 
     private JSONObject buildDashboard(String partnerStackKey, String fallbackSubId, JSONArray customers,

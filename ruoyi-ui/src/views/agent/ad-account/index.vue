@@ -37,56 +37,49 @@
 
     <el-card shadow="never" class="table-card">
       <el-table :data="filteredList" border v-loading="loading">
-        <el-table-column prop="accountId" label="广告户ID" min-width="180">
+        <el-table-column prop="contact" label="联系人" min-width="220">
           <template slot-scope="scope">
-            <el-button type="text" class="account-link" @click="openTransactionDialog(scope.row)">{{ scope.row.accountId }}</el-button>
+            <el-button type="text" class="account-link" @click="openTransactionDialog(scope.row)">{{ scope.row.contact }}</el-button>
           </template>
         </el-table-column>
-        <el-table-column prop="subId" label="SubId" min-width="120" align="center" />
-        <el-table-column prop="countryCode" label="国家代码" min-width="120" align="center" />
         <el-table-column prop="statusLabel" label="状态" min-width="110" align="center">
           <template slot-scope="scope">
-            <el-tag :type="scope.row.statusType" size="small">{{ scope.row.statusLabel }}</el-tag>
+            <span class="status-dot" :class="scope.row.statusClass"></span>
+            <span>{{ scope.row.statusLabel }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="spend" label="有效消耗" min-width="120" align="center">
+        <el-table-column prop="sourceType" label="来源" min-width="140" align="center" />
+        <el-table-column prop="revenue" label="收入" min-width="140" align="center">
           <template slot-scope="scope">
-            <span>${{ scope.row.spend }}</span>
+            <span>${{ scope.row.revenue }} USD</span>
           </template>
         </el-table-column>
-        <el-table-column prop="updateTime" label="更新时间" min-width="180" align="center" />
-        <el-table-column prop="createTime" label="创建时间" min-width="180" align="center" />
+        <el-table-column prop="createdDate" label="日期已创建" min-width="140" align="center" />
       </el-table>
     </el-card>
 
     <el-dialog
-      :title="`广告户ID: ${dialog.customerKey || '-'} 的行动列表`"
+      :title="`${dialog.contact || dialog.customerKey || '-'} 的客户活动`"
       :visible.sync="dialog.open"
       width="900px"
       append-to-body
       class="transaction-dialog"
     >
-      <div class="dialog-toolbar">
-        <div class="dialog-summary">
-          <span>共 {{ filteredTransactions.length }} 个行动</span>
-          <span>总有效消耗: <strong>${{ totalDialogSpend }}</strong></span>
-        </div>
-        <div class="dialog-actions">
-          <el-input v-model="dialog.keyword" placeholder="搜索广告账户ID" clearable />
-          <el-button type="primary" icon="el-icon-download" @click="handleExportTransactions">导出</el-button>
-        </div>
-      </div>
-
-      <el-table :data="filteredTransactions" border v-loading="dialog.loading">
-        <el-table-column prop="transactionId" label="交易 ID" min-width="220" />
-        <el-table-column prop="amountSUM" label="有效消耗" min-width="140" align="center">
-          <template slot-scope="scope">
-            <span>${{ scope.row.amountSUM }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="transactionTime" label="交易时间" min-width="180" align="center" />
-        <el-table-column prop="status" label="状态" min-width="120" align="center" />
-      </el-table>
+      <el-empty v-if="!dialog.loading && !filteredTransactions.length" description="暂无活动数据" />
+      <el-timeline v-else v-loading="dialog.loading" class="activity-timeline">
+        <el-timeline-item
+          v-for="item in filteredTransactions"
+          :key="item.eventId"
+          :timestamp="item.eventDate"
+          placement="top"
+          color="#e8e8e8"
+        >
+          <div class="activity-row">
+            <span class="activity-desc">{{ item.description }}</span>
+            <span class="activity-date">{{ item.eventDate }}</span>
+          </div>
+        </el-timeline-item>
+      </el-timeline>
 
       <div slot="footer">
         <el-button @click="dialog.open = false">关闭</el-button>
@@ -114,17 +107,16 @@ export default {
       loading: false,
       subIdOptions: [],
       statusOptions: [
-        { label: '正常', value: 'active' },
-        { label: '审核中', value: 'pending' },
-        { label: '已停用', value: 'disabled' }
+        { label: '已注册', value: 'registered' },
+        { label: '已付费', value: 'paid' }
       ],
       accountList: [],
       dialog: {
         open: false,
         loading: false,
         customerKey: '',
+        contact: '',
         subId: '',
-        keyword: '',
         rows: []
       }
     }
@@ -132,20 +124,15 @@ export default {
   computed: {
     filteredList() {
       return this.accountList.filter(item => {
-        const matchId = !this.filters.accountId || item.accountId.toLowerCase().includes(this.filters.accountId.toLowerCase())
+        const matchId = !this.filters.accountId || item.contact.toLowerCase().includes(this.filters.accountId.toLowerCase())
         const matchSubId = !this.filters.subId || item.subId === this.filters.subId
         const matchStatus = !this.filters.status || item.status === this.filters.status
-        const matchSpend = Number(item.spend) >= Number(this.filters.minSpend || 0)
+        const matchSpend = Number(item.revenue) >= Number(this.filters.minSpend || 0)
         return matchId && matchSubId && matchStatus && matchSpend
       })
     },
     filteredTransactions() {
-      return this.dialog.rows.filter(item => {
-        return !this.dialog.keyword || item.transactionId.toLowerCase().includes(this.dialog.keyword.toLowerCase())
-      })
-    },
-    totalDialogSpend() {
-      return this.filteredTransactions.reduce((sum, item) => sum + Number(item.amountSUM || 0), 0).toFixed(2)
+      return this.dialog.rows
     }
   },
   created() {
@@ -167,15 +154,15 @@ export default {
         this.accountList = list.map(item => {
           const status = this.normalizeStatus(item.hasPaid)
           return {
-            accountId: item.customerKey || '-',
+            customerKey: item.customerKey || '-',
+            contact: item.contact || item.customerKey || '-',
             subId: item.subId || '-',
-            countryCode: item.countryIso || '-',
             status,
             statusLabel: this.toStatusLabel(status),
-            statusType: this.toStatusType(status),
-            spend: Number(item.amountSUM || 0).toFixed(2),
-            updateTime: this.formatTime(item.updatedAt),
-            createTime: this.formatTime(item.createdAt)
+            statusClass: this.toStatusClass(status),
+            sourceType: item.sourceType || '-',
+            revenue: Number(item.totalRevenue || 0).toFixed(2),
+            createdDate: item.createdDate || this.formatDate(item.createdAt)
           }
         })
         this.subIdOptions = [...new Set(this.accountList.map(item => item.subId).filter(item => item && item !== '-'))]
@@ -205,15 +192,15 @@ export default {
     },
     toStatusLabel(status) {
       return {
-        registered: '注册',
-        paid: '付费'
-      }[status] || '注册'
+        registered: '已注册',
+        paid: '已付费'
+      }[status] || '已注册'
     },
-    toStatusType(status) {
+    toStatusClass(status) {
       return {
-        registered: 'primary',
-        paid: 'success'
-      }[status] || 'info'
+        registered: 'signed-up',
+        paid: 'paid'
+      }[status] || 'signed-up'
     },
     formatTime(value) {
       if (!value) {
@@ -225,6 +212,16 @@ export default {
       }
       const pad = num => `${num}`.padStart(2, '0')
       return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    },
+    formatDate(value) {
+      if (!value || value === '-') {
+        return '-'
+      }
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) {
+        return value
+      }
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     },
     handleSearch() {
       this.fetchAccounts()
@@ -242,35 +239,25 @@ export default {
     async openTransactionDialog(row) {
       this.dialog.open = true
       this.dialog.loading = true
-      this.dialog.customerKey = row.accountId
+      this.dialog.customerKey = row.customerKey
+      this.dialog.contact = row.contact
       this.dialog.subId = row.subId
-      this.dialog.keyword = ''
       try {
         const response = await getPartnerStackTransactionDetails({
-          customerKey: row.accountId,
+          customerKey: row.customerKey,
           subId: row.subId
         })
         const rows = response.data && response.data.rows ? response.data.rows : []
         this.dialog.rows = rows.map(item => ({
-          transactionId: item.transactionId || '-',
+          eventId: item.eventId || '-',
+          description: item.description || '-',
           amountSUM: Number(item.amountSUM || 0).toFixed(2),
-          transactionTime: item.transactionTime || '-',
-          status: item.status || '-'
+          eventTime: item.eventTime || '-',
+          eventDate: this.formatDate(item.eventTime)
         }))
       } finally {
         this.dialog.loading = false
       }
-    },
-    handleExportTransactions() {
-      const header = ['交易 ID', '有效消耗', '交易时间', '状态']
-      const lines = this.filteredTransactions.map(item => [item.transactionId, item.amountSUM, item.transactionTime, item.status])
-      const csvContent = [header, ...lines].map(row => row.join(',')).join('\n')
-      const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = `${this.dialog.customerKey || 'transactions'}.csv`
-      link.click()
-      URL.revokeObjectURL(link.href)
     }
   }
 }
@@ -306,51 +293,43 @@ export default {
   font-weight: 500;
 }
 
-.dialog-toolbar {
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.status-dot.signed-up {
+  background: #5b6cff;
+}
+
+.status-dot.paid {
+  background: #2bb673;
+}
+
+.activity-timeline {
+  padding: 12px 8px 0;
+}
+
+.activity-row {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 16px;
-  margin-bottom: 18px;
-  background: #f7f9fc;
-  border-radius: 12px;
-}
-
-.dialog-summary {
-  display: flex;
-  gap: 16px;
-  color: #5d6785;
-  font-size: 18px;
-}
-
-.dialog-summary strong {
+  gap: 24px;
   color: #303133;
+  font-size: 16px;
+  line-height: 24px;
 }
 
-.dialog-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.activity-desc {
+  flex: 1;
 }
 
-.dialog-actions .el-input {
-  width: 280px;
-}
-
-@media (max-width: 768px) {
-  .filter-form {
-    display: block;
-  }
-
-  .filter-form ::v-deep .el-form-item {
-    margin-right: 0;
-  }
-
-  .dialog-toolbar,
-  .dialog-summary,
-  .dialog-actions {
-    display: block;
-  }
+.activity-date {
+  min-width: 120px;
+  color: #606266;
+  text-align: right;
 }
 </style>
