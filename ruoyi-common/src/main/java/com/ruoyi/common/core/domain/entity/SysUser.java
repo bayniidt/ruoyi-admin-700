@@ -55,6 +55,9 @@ public class SysUser extends BaseEntity
     /** 用户头像 */
     private String avatar;
 
+    /** 当前用户绑定的 PartnerStack 客户 Key */
+    private String partnerStackKey;
+
     /** 密码 */
     private String password;
 
@@ -199,6 +202,18 @@ public class SysUser extends BaseEntity
         this.avatar = avatar;
     }
 
+    @Xss(message = "PartnerStack Key不能包含脚本字符")
+    @Size(min = 0, max = 100, message = "PartnerStack Key长度不能超过100个字符")
+    public String getPartnerStackKey()
+    {
+        return partnerStackKey;
+    }
+
+    public void setPartnerStackKey(String partnerStackKey)
+    {
+        this.partnerStackKey = partnerStackKey;
+    }
+
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     public String getPassword()
     {
@@ -321,6 +336,7 @@ public class SysUser extends BaseEntity
             .append("phonenumber", getPhonenumber())
             .append("sex", getSex())
             .append("avatar", getAvatar())
+            .append("partnerStackKey", getPartnerStackKey())
             .append("password", getPassword())
             .append("status", getStatus())
             .append("delFlag", getDelFlag())

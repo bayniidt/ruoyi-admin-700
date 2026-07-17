@@ -61,6 +61,8 @@ public class AgentClientService
 
         String apiSecret = randomToken(32);
         String passwordHash = SecurityUtils.encryptPassword(agent.getPassword() == null ? "" : agent.getPassword());
+        String partnerCustomerKey = StringUtils.isBlank(agent.getPartnerCustomerKey())
+                ? agent.getUserName().trim() : agent.getPartnerCustomerKey().trim();
         SysUser sysUser = new SysUser();
         sysUser.setDeptId(ownerDeptId);
         sysUser.setUserName(agent.getUserName().trim());
@@ -69,6 +71,7 @@ public class AgentClientService
         sysUser.setPhonenumber(agent.getPhonenumber());
         sysUser.setPassword(passwordHash);
         sysUser.setStatus("0");
+        sysUser.setPartnerStackKey(partnerCustomerKey);
         sysUser.setRoleIds(new Long[] { agentRoleId });
         sysUser.setCreateBy(createBy);
         sysUser.setRemark(agent.getRemark());
@@ -80,8 +83,7 @@ public class AgentClientService
         agent.setNickName(agent.getNickName().trim());
         agent.setPasswordHash(passwordHash);
         agent.setPassword(null);
-        agent.setPartnerCustomerKey(StringUtils.isBlank(agent.getPartnerCustomerKey())
-                ? agent.getUserName() : agent.getPartnerCustomerKey().trim());
+        agent.setPartnerCustomerKey(partnerCustomerKey);
         agent.setApiKey("ag_" + randomToken(18));
         agent.setApiSecretHash(SecurityUtils.encryptPassword(apiSecret));
         agent.setStatus("0");

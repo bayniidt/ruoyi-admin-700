@@ -133,6 +133,8 @@
 </template>
 
 <script>
+import { getUserProfile, updatePartnerStackKey } from '@/api/system/user'
+
 export default {
   name: 'Index',
   data() {
@@ -235,7 +237,43 @@ export default {
       ]
     }
   },
+  created() {
+    this.checkPartnerStackBinding()
+  },
   methods: {
+    checkPartnerStackBinding() {
+      getUserProfile().then(response => {
+        const partnerStackKey = response.data && response.data.partnerStackKey
+        if (partnerStackKey && partnerStackKey.trim()) {
+          return
+        }
+        this.$prompt(
+          'PartnerStack Key 用于查询您自己的 PartnerStack 数据，请先完成绑定。',
+          '绑定 PartnerStack Key',
+          {
+            confirmButtonText: '立即绑定',
+            cancelButtonText: '稍后绑定',
+            closeOnClickModal: false,
+            closeOnPressEscape: false,
+            inputPlaceholder: '请输入 PartnerStack Key',
+            inputValidator(value) {
+              const key = (value || '').trim()
+              if (!key) {
+                return 'PartnerStack Key不能为空'
+              }
+              if (key.length > 100) {
+                return 'PartnerStack Key长度不能超过100个字符'
+              }
+              return true
+            }
+          }
+        ).then(({ value }) => {
+          return updatePartnerStackKey(value.trim()).then(() => {
+            this.$modal.msgSuccess('PartnerStack Key绑定成功')
+          })
+        }).catch(() => {})
+      })
+    },
     handleSearch() {
       this.$message.success('已按 mock 条件完成查询')
     },

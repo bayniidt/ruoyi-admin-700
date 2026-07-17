@@ -22,10 +22,9 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.domain.AjaxResult;
+import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.common.exception.ServiceException;
-import com.ruoyi.common.utils.SecurityUtils;
-import com.ruoyi.system.domain.AgentClient;
-import com.ruoyi.system.service.AgentClientService;
+import com.ruoyi.system.service.ISysUserService;
 
 /**
  * PartnerStack 数据代理
@@ -44,11 +43,11 @@ public class PartnerStackController extends BaseController
     @Value("${partnerstack.token:}")
     private String token;
 
-    private final AgentClientService agentClientService;
+    private final ISysUserService userService;
 
-    public PartnerStackController(AgentClientService agentClientService)
+    public PartnerStackController(ISysUserService userService)
     {
-        this.agentClientService = agentClientService;
+        this.userService = userService;
     }
 
     @GetMapping("/customers")
@@ -58,7 +57,7 @@ public class PartnerStackController extends BaseController
             @RequestParam(required = false) String startingAfter,
             @RequestParam(required = false) String endingBefore)
     {
-        String customerKey = scopedCustomerKey(null);
+        String customerKey = scopedCustomerKey();
         return this.proxyList("/customers", buildCommonParams(minCreated, maxCreated, limit, startingAfter, endingBefore), customerKey);
     }
 
@@ -71,7 +70,7 @@ public class PartnerStackController extends BaseController
             @RequestParam(required = false) String endingBefore)
     {
         Map<String, Object> params = buildCommonParams(minCreated, maxCreated, limit, startingAfter, endingBefore);
-        String scopedCustomerKey = scopedCustomerKey(customerKey);
+        String scopedCustomerKey = scopedCustomerKey();
         putIfPresent(params, "customer_key", scopedCustomerKey);
         return this.proxyList("/actions", params, scopedCustomerKey);
     }
@@ -83,7 +82,7 @@ public class PartnerStackController extends BaseController
             @RequestParam(required = false) String startingAfter,
             @RequestParam(required = false) String endingBefore)
     {
-        String customerKey = scopedCustomerKey(null);
+        String customerKey = scopedCustomerKey();
         return this.proxyList("/transactions", buildCommonParams(minCreated, maxCreated, limit, startingAfter, endingBefore), customerKey);
     }
 
@@ -98,16 +97,11 @@ public class PartnerStackController extends BaseController
             @RequestParam(required = false) String endingBefore)
     {
         Map<String, Object> params = buildCommonParams(minCreated, maxCreated, limit, startingAfter, endingBefore);
-        String scopedCustomerKey = scopedCustomerKey(customerKey);
+        String scopedCustomerKey = scopedCustomerKey();
         putIfPresent(params, "customer_key", scopedCustomerKey);
         putIfPresent(params, "currency", currency);
         putIfPresent(params, "payment_status", paymentStatus);
         return this.proxyList("/rewards", params, scopedCustomerKey);
-    }
-
-    private AjaxResult proxyList(String path, Map<String, Object> params)
-    {
-        return proxyList(path, params, null);
     }
 
     private AjaxResult proxyList(String path, Map<String, Object> params, String customerKey)
@@ -149,18 +143,14 @@ public class PartnerStackController extends BaseController
         }
     }
 
-    private String scopedCustomerKey(String requestedCustomerKey)
+    private String scopedCustomerKey()
     {
-        if (!SecurityUtils.hasRole("agent"))
+        SysUser user = userService.selectUserById(getUserId());
+        if (user == null || !StringUtils.hasText(user.getPartnerStackKey()))
         {
-            return requestedCustomerKey;
+            throw new ServiceException("当前用户未绑定 PartnerStack Key，请先在个人中心完成绑定");
         }
-        AgentClient agent = agentClientService.selectAgentBySysUserId(getUserId());
-        if (agent == null || !StringUtils.hasText(agent.getPartnerCustomerKey()))
-        {
-            throw new ServiceException("当前代理未绑定 PartnerStack 客户Key");
-        }
-        return agent.getPartnerCustomerKey();
+        return user.getPartnerStackKey().trim();
     }
 
     private void filterByCustomer(JSONObject body, String customerKey)

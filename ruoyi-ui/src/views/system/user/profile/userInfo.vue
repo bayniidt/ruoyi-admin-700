@@ -1,5 +1,5 @@
 <template>
-  <el-form ref="form" :model="form" :rules="rules" label-width="80px">
+  <el-form ref="form" :model="form" :rules="rules" label-width="140px">
     <el-form-item label="用户昵称" prop="nickName">
       <el-input v-model="form.nickName" maxlength="30" />
     </el-form-item> 
@@ -8,6 +8,14 @@
     </el-form-item>
     <el-form-item label="邮箱" prop="email">
       <el-input v-model="form.email" maxlength="50" />
+    </el-form-item>
+    <el-form-item label="PartnerStack Key" prop="partnerStackKey">
+      <el-input
+        v-model.trim="form.partnerStackKey"
+        maxlength="100"
+        show-word-limit
+        placeholder="请输入 PartnerStack Key"
+      />
     </el-form-item>
     <el-form-item label="性别">
       <el-radio-group v-model="form.sex">
@@ -54,6 +62,10 @@ export default {
             message: "请输入正确的手机号码",
             trigger: "blur"
           }
+        ],
+        partnerStackKey: [
+          { required: true, message: "PartnerStack Key不能为空", trigger: "blur" },
+          { max: 100, message: "PartnerStack Key长度不能超过100个字符", trigger: "blur" }
         ]
       }
     }
@@ -62,7 +74,13 @@ export default {
     user: {
       handler(user) {
         if (user) {
-          this.form = { nickName: user.nickName, phonenumber: user.phonenumber, email: user.email, sex: user.sex }
+          this.form = {
+            nickName: user.nickName,
+            phonenumber: user.phonenumber,
+            email: user.email,
+            sex: user.sex,
+            partnerStackKey: user.partnerStackKey || ""
+          }
         }
       },
       immediate: true
@@ -76,6 +94,7 @@ export default {
             this.$modal.msgSuccess("修改成功")
             this.user.phonenumber = this.form.phonenumber
             this.user.email = this.form.email
+            this.user.partnerStackKey = this.form.partnerStackKey
           })
         }
       })

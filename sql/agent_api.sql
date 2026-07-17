@@ -1,5 +1,7 @@
--- 下级代理开放接口与消耗统计（MySQL 8+）
+-- 下级代理开放接口与消耗统计（MySQL 5.7+）
 -- 部署时执行一次；接口密钥只保存 BCrypt 散列，明文仅在创建/重置时返回一次。
+
+set names utf8mb4;
 
 create table if not exists agent_client (
   agent_id           bigint(20)      not null auto_increment comment '代理ID',
@@ -34,6 +36,13 @@ set @ddl = if((select count(*) from information_schema.columns where table_schem
     'select 1');
 prepare stmt from @ddl; execute stmt; deallocate prepare stmt;
 
+-- 每个后台用户独立绑定 PartnerStack Key，用于限定其可查询的数据。
+set @ddl = if((select count(*) from information_schema.columns where table_schema = database()
+    and table_name = 'sys_user' and column_name = 'partner_stack_key') = 0,
+    'alter table sys_user add column partner_stack_key varchar(100) default '''' comment ''用户绑定的PartnerStack Key'' after remark',
+    'select 1');
+prepare stmt from @ddl; execute stmt; deallocate prepare stmt;
+
 set @ddl = if((select count(*) from information_schema.columns where table_schema = database()
     and table_name = 'agent_client' and column_name = 'partner_customer_key') = 0,
     'alter table agent_client add column partner_customer_key varchar(100) null comment ''PartnerStack客户Key'' after commission_rate',
@@ -52,12 +61,6 @@ insert into sys_role(role_name, role_key, role_sort, data_scope, menu_check_stri
 select '代理用户', 'agent', 3, '2', 1, 1, '0', '0', 'admin', sysdate(), '下级代理后台登录角色'
 where not exists (select 1 from sys_role where role_key = 'agent');
 
-insert ignore into sys_role_menu(role_id, menu_id)
-select r.role_id, m.menu_id
-from sys_role r
-join sys_menu m on m.menu_id in (2000, 2001, 2002, 2003, 2004, 2005)
-where r.role_key = 'agent';
-
 -- 将旧版已创建的代理补成可登录的若依用户，并保留其原密码散列。
 insert into sys_user(dept_id, user_name, nick_name, email, phonenumber, password,
     status, del_flag, create_by, create_time, remark)
@@ -73,6 +76,27 @@ join sys_user u on u.user_name = a.user_name and u.del_flag = '0'
 set a.sys_user_id = u.user_id,
     a.partner_customer_key = coalesce(nullif(a.partner_customer_key, ''), a.user_name)
 where a.sys_user_id is null;
+
+update sys_user u
+join agent_client a on a.sys_user_id = u.user_id
+set u.partner_stack_key = a.partner_customer_key
+where (u.partner_stack_key is null or u.partner_stack_key = '')
+  and a.partner_customer_key is not null and a.partner_customer_key <> '';
+
+-- 代理业务菜单。使用固定 ID，便于角色授权和重复部署。
+insert ignore into sys_menu values
+(2000, '代理管理', 0, 1, 'agent', null, '', '', 1, 0, 'M', '0', '0', '', 'peoples', 'admin', sysdate(), '', null, '代理业务目录'),
+(2001, '代理管理', 2000, 1, 'manage', 'agent/manage/index', '', '', 1, 0, 'C', '0', '0', 'agent:manage:list', 'user', 'admin', sysdate(), '', null, '代理账号管理'),
+(2002, '下级数据', 2000, 2, 'downline', 'agent/downline/index', '', '', 1, 0, 'C', '0', '0', 'agent:downline:list', 'dashboard', 'admin', sysdate(), '', null, '代理消耗数据'),
+(2003, 'SubId管理', 2000, 3, 'subid', 'agent/subid/index', '', '', 1, 0, 'C', '0', '0', 'agent:subid:list', 'dict', 'admin', sysdate(), '', null, 'SubId管理'),
+(2004, '广告户管理', 2000, 4, 'ad-account', 'agent/ad-account/index', '', '', 1, 0, 'C', '0', '0', 'agent:adaccount:list', 'build', 'admin', sysdate(), '', null, '广告户管理'),
+(2005, '激励计划', 0, 2, 'incentive', 'incentive/index', '', '', 1, 0, 'C', '0', '0', 'incentive:plan:list', 'money', 'admin', sysdate(), '', null, '激励计划');
+
+insert ignore into sys_role_menu(role_id, menu_id)
+select r.role_id, m.menu_id
+from sys_role r
+join sys_menu m on m.menu_id in (2000, 2001, 2002, 2003, 2004, 2005)
+where r.role_key = 'agent';
 
 insert ignore into sys_user_role(user_id, role_id)
 select a.sys_user_id, r.role_id
