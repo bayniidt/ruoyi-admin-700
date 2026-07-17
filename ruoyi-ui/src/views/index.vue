@@ -5,17 +5,17 @@
         <p class="dashboard-eyebrow">Overview Dashboard</p>
         <h1>渠道数据总览</h1>
         <p class="dashboard-subtitle">
-          用 mock 数据先把首页结构跑通，后续统一替换为真实接口。
+          当前展示账号 {{ partnerStackKey || '-' }} 在 PartnerStack 的实时数据。
         </p>
       </div>
       <div class="hero-amount">
         <span>预估分销佣金</span>
-        <strong>${{ summary.estimatedCommission }}</strong>
+        <strong>${{ formatMoney(summary.rewardAmount) }}</strong>
       </div>
     </div>
 
     <el-card shadow="never" class="filter-panel">
-      <el-form :inline="true" :model="filters" class="dashboard-form">
+      <el-form :inline="true" :model="filters" class="dashboard-form" v-loading="loading">
         <el-form-item label="日期范围">
           <el-date-picker
             v-model="filters.dateRange"
@@ -27,7 +27,7 @@
           />
         </el-form-item>
         <el-form-item label="SubId">
-          <el-select v-model="filters.subId" placeholder="请选择" clearable>
+          <el-select v-model="filters.subId" placeholder="全部" clearable>
             <el-option
               v-for="item in subIdOptions"
               :key="item"
@@ -46,7 +46,7 @@
       </el-form>
     </el-card>
 
-    <el-row :gutter="16" class="metric-grid">
+    <el-row :gutter="16" class="metric-grid" v-loading="loading">
       <el-col v-for="card in metricCards" :key="card.key" :xs="24" :sm="12" :lg="8" :xl="6">
         <el-card shadow="hover" class="metric-card">
           <div class="metric-icon" :style="{ background: card.color }">
@@ -67,19 +67,19 @@
             <span>明细数据</span>
             <span class="header-tip">共 {{ tableData.length }} 条</span>
           </div>
-          <el-table :data="tableData" stripe>
+          <el-table :data="tableData" stripe v-loading="loading" empty-text="当前条件下暂无 PartnerStack 数据">
+            <el-table-column prop="customerKey" label="客户Key" min-width="180" />
             <el-table-column prop="subId" label="SUBID" min-width="120" />
-            <el-table-column prop="clicks" label="总点击" align="right" />
-            <el-table-column prop="uniqueClicks" label="不重复点击" align="right" />
-            <el-table-column prop="registrations" label="注册" align="right" />
-            <el-table-column prop="paidRegistrations" label="付费注册" align="right" />
+            <el-table-column prop="signups" label="注册" align="right" />
+            <el-table-column prop="paidSignups" label="付费注册" align="right" />
             <el-table-column prop="actions" label="动作数" align="right" />
             <el-table-column prop="validActions" label="有效动作数" align="right" />
-            <el-table-column prop="spend" label="有效消耗" align="right">
-              <template slot-scope="scope">${{ scope.row.spend }}</template>
+            <el-table-column prop="transactions" label="交易笔数" align="right" />
+            <el-table-column prop="transactionAmount" label="有效消耗" min-width="110" align="right">
+              <template slot-scope="scope">${{ formatMoney(scope.row.transactionAmount) }}</template>
             </el-table-column>
-            <el-table-column prop="commission" label="预估分销佣金" align="right">
-              <template slot-scope="scope">${{ scope.row.commission }}</template>
+            <el-table-column prop="rewardAmount" label="预估分销佣金" min-width="130" align="right">
+              <template slot-scope="scope">${{ formatMoney(scope.row.rewardAmount) }}</template>
             </el-table-column>
           </el-table>
         </el-card>
@@ -101,30 +101,30 @@
           <div class="notice-divider"></div>
           <div class="notice-summary">
             <span>当前筛选条件下</span>
-            <strong>{{ summary.uniqueClicks }} 个有效点击</strong>
-            <strong>{{ summary.registrations }} 个注册</strong>
+            <strong>{{ summary.transactions }} 笔交易</strong>
+            <strong>{{ summary.signups }} 个注册动作</strong>
           </div>
         </el-card>
 
         <el-card shadow="never" class="mini-trend-card">
           <div slot="header" class="card-header">
-            <span>今日摘要</span>
+            <span>筛选摘要</span>
           </div>
           <div class="trend-row">
-            <span>点击转化率</span>
-            <strong>18.7%</strong>
+            <span>注册动作 / 新增客户</span>
+            <strong>{{ signupRate }}</strong>
           </div>
           <div class="trend-row">
-            <span>注册转化率</span>
-            <strong>0.0%</strong>
+            <span>付费动作 / 注册动作</span>
+            <strong>{{ paidRate }}</strong>
           </div>
           <div class="trend-row">
-            <span>付费注册占比</span>
-            <strong>0.0%</strong>
+            <span>付费客户占比</span>
+            <strong>{{ paidCustomerRate }}</strong>
           </div>
           <div class="trend-row">
             <span>平均单次消耗</span>
-            <strong>$0.00</strong>
+            <strong>${{ averageTransactionAmount }}</strong>
           </div>
         </el-card>
       </el-col>
@@ -133,157 +133,147 @@
 </template>
 
 <script>
+import { getPartnerStackDashboard } from '@/api/partnerstack'
 import { getUserProfile, updatePartnerStackKey } from '@/api/system/user'
+
+const pad = value => `${value}`.padStart(2, '0')
+const formatDateTime = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+const createDefaultRange = () => {
+  const end = new Date()
+  const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000)
+  return [formatDateTime(start), formatDateTime(end)]
+}
+const emptySummary = () => ({
+  customers: 0,
+  paidCustomers: 0,
+  signups: 0,
+  paidSignups: 0,
+  actions: 0,
+  validActions: 0,
+  transactions: 0,
+  transactionAmount: 0,
+  rewards: 0,
+  rewardAmount: 0
+})
 
 export default {
   name: 'Index',
   data() {
-    const defaultRange = ['2026-07-01 00:00:00', '2026-07-16 23:59:59']
     return {
+      loading: false,
+      partnerStackKey: '',
       filters: {
-        dateRange: defaultRange,
+        dateRange: createDefaultRange(),
         subId: '',
         transactionId: ''
       },
-      subIdOptions: ['MY', '12344', 'demo-subid'],
-      summary: {
-        rawClicks: 6,
-        uniqueClicks: 6,
-        registrations: 0,
-        paidRegistrations: 0,
-        actions: 0,
-        validActions: 0,
-        spend: '0.00',
-        estimatedCommission: '0.00'
-      },
-      tableData: [
-        {
-          subId: 'MY',
-          clicks: 6,
-          uniqueClicks: 6,
-          registrations: 0,
-          paidRegistrations: 0,
-          actions: 0,
-          validActions: 0,
-          spend: '0.00',
-          commission: '0.00'
-        },
-        {
-          subId: '12344',
-          clicks: 0,
-          uniqueClicks: 0,
-          registrations: 0,
-          paidRegistrations: 0,
-          actions: 0,
-          validActions: 0,
-          spend: '0.00',
-          commission: '0.00'
-        }
-      ]
+      subIdOptions: [],
+      summary: emptySummary(),
+      tableData: []
     }
   },
   computed: {
     metricCards() {
       return [
-        {
-          key: 'rawClicks',
-          label: '原始点击',
-          value: this.summary.rawClicks,
-          icon: 'el-icon-view',
-          color: 'linear-gradient(135deg, #6f7bf7, #8e66ff)'
-        },
-        {
-          key: 'uniqueClicks',
-          label: '不重复点击',
-          value: this.summary.uniqueClicks,
-          icon: 'el-icon-thumb',
-          color: 'linear-gradient(135deg, #5f8bff, #6ca8ff)'
-        },
-        {
-          key: 'registrations',
-          label: '注册数',
-          value: this.summary.registrations,
-          icon: 'el-icon-user',
-          color: 'linear-gradient(135deg, #23b7a4, #49d3a8)'
-        },
-        {
-          key: 'paidRegistrations',
-          label: '付费注册数',
-          value: this.summary.paidRegistrations,
-          icon: 'el-icon-s-custom',
-          color: 'linear-gradient(135deg, #f58a66, #f7b267)'
-        },
-        {
-          key: 'actions',
-          label: '动作数',
-          value: this.summary.actions,
-          icon: 'el-icon-data-analysis',
-          color: 'linear-gradient(135deg, #f0b429, #f7d154)'
-        },
-        {
-          key: 'validActions',
-          label: '有效动作数',
-          value: this.summary.validActions,
-          icon: 'el-icon-histogram',
-          color: 'linear-gradient(135deg, #4d7cff, #58c0ff)'
-        },
-        {
-          key: 'spend',
-          label: '有效消耗',
-          value: `$${this.summary.spend}`,
-          icon: 'el-icon-wallet',
-          color: 'linear-gradient(135deg, #8b5cf6, #c084fc)'
-        }
+        { key: 'customers', label: '新增客户', value: this.summary.customers, icon: 'el-icon-user', color: 'linear-gradient(135deg, #6f7bf7, #8e66ff)' },
+        { key: 'paidCustomers', label: '付费客户', value: this.summary.paidCustomers, icon: 'el-icon-s-custom', color: 'linear-gradient(135deg, #5f8bff, #6ca8ff)' },
+        { key: 'signups', label: '注册动作', value: this.summary.signups, icon: 'el-icon-circle-plus-outline', color: 'linear-gradient(135deg, #23b7a4, #49d3a8)' },
+        { key: 'actions', label: '动作数', value: this.summary.actions, icon: 'el-icon-data-analysis', color: 'linear-gradient(135deg, #f0b429, #f7d154)' },
+        { key: 'validActions', label: '有效动作数', value: this.summary.validActions, icon: 'el-icon-histogram', color: 'linear-gradient(135deg, #4d7cff, #58c0ff)' },
+        { key: 'transactions', label: '交易笔数', value: this.summary.transactions, icon: 'el-icon-tickets', color: 'linear-gradient(135deg, #f58a66, #f7b267)' },
+        { key: 'transactionAmount', label: '有效消耗', value: `$${this.formatMoney(this.summary.transactionAmount)}`, icon: 'el-icon-wallet', color: 'linear-gradient(135deg, #8b5cf6, #c084fc)' },
+        { key: 'rewards', label: '奖励笔数', value: this.summary.rewards, icon: 'el-icon-coin', color: 'linear-gradient(135deg, #17a2b8, #45c4d4)' }
       ]
+    },
+    signupRate() {
+      return this.toPercent(this.summary.signups, this.summary.customers)
+    },
+    paidRate() {
+      return this.toPercent(this.summary.paidSignups, this.summary.signups)
+    },
+    paidCustomerRate() {
+      return this.toPercent(this.summary.paidCustomers, this.summary.customers)
+    },
+    averageTransactionAmount() {
+      if (!this.summary.transactions) return '0.00'
+      return this.formatMoney(Number(this.summary.transactionAmount) / this.summary.transactions)
     }
   },
   created() {
-    this.checkPartnerStackBinding()
+    this.initializeDashboard()
   },
   methods: {
-    checkPartnerStackBinding() {
-      getUserProfile().then(response => {
-        const partnerStackKey = response.data && response.data.partnerStackKey
-        if (partnerStackKey && partnerStackKey.trim()) {
-          return
+    async initializeDashboard() {
+      const response = await getUserProfile()
+      const partnerStackKey = response.data && response.data.partnerStackKey
+      if (partnerStackKey && partnerStackKey.trim()) {
+        this.partnerStackKey = this.maskPartnerStackKey(partnerStackKey.trim())
+        await this.fetchDashboard()
+        return
+      }
+      this.promptPartnerStackKey()
+    },
+    promptPartnerStackKey() {
+      this.$prompt('请输入当前账号的 PartnerStack API Token；也兼容合作关系Key（part_...）或客户Key（cus_...）。', '绑定 PartnerStack', {
+        confirmButtonText: '立即绑定',
+        cancelButtonText: '稍后绑定',
+        closeOnClickModal: false,
+        closeOnPressEscape: false,
+        inputPlaceholder: '请输入 PartnerStack API Token',
+        inputValidator(value) {
+          const key = (value || '').trim()
+          if (!key) return 'PartnerStack Key不能为空'
+          if (key.length > 100) return 'PartnerStack Key长度不能超过100个字符'
+          return true
         }
-        this.$prompt(
-          'PartnerStack Key 用于查询您自己的 PartnerStack 数据，请先完成绑定。',
-          '绑定 PartnerStack Key',
-          {
-            confirmButtonText: '立即绑定',
-            cancelButtonText: '稍后绑定',
-            closeOnClickModal: false,
-            closeOnPressEscape: false,
-            inputPlaceholder: '请输入 PartnerStack Key',
-            inputValidator(value) {
-              const key = (value || '').trim()
-              if (!key) {
-                return 'PartnerStack Key不能为空'
-              }
-              if (key.length > 100) {
-                return 'PartnerStack Key长度不能超过100个字符'
-              }
-              return true
-            }
-          }
-        ).then(({ value }) => {
-          return updatePartnerStackKey(value.trim()).then(() => {
-            this.$modal.msgSuccess('PartnerStack Key绑定成功')
-          })
-        }).catch(() => {})
-      })
+      }).then(async ({ value }) => {
+        const partnerStackKey = value.trim()
+        await updatePartnerStackKey(partnerStackKey)
+        this.partnerStackKey = this.maskPartnerStackKey(partnerStackKey)
+        this.$modal.msgSuccess('PartnerStack Key绑定成功')
+        await this.fetchDashboard()
+      }).catch(() => {})
+    },
+    async fetchDashboard() {
+      this.loading = true
+      try {
+        const [start, end] = this.filters.dateRange || []
+        const response = await getPartnerStackDashboard({
+          minCreated: start ? new Date(start).getTime() : undefined,
+          maxCreated: end ? new Date(end).getTime() : undefined,
+          subId: this.filters.subId || undefined,
+          transactionId: this.filters.transactionId || undefined
+        })
+        const data = response.data || {}
+        this.partnerStackKey = data.partnerStackKey || this.partnerStackKey
+        this.summary = { ...emptySummary(), ...(data.summary || {}) }
+        this.tableData = data.rows || []
+        this.subIdOptions = data.subIds || []
+      } finally {
+        this.loading = false
+      }
     },
     handleSearch() {
-      this.$message.success('已按 mock 条件完成查询')
+      this.fetchDashboard()
     },
     handleReset() {
       this.filters = {
-        dateRange: ['2026-07-01 00:00:00', '2026-07-16 23:59:59'],
+        dateRange: createDefaultRange(),
         subId: '',
         transactionId: ''
       }
-      this.$message.success('筛选条件已重置')
+      this.fetchDashboard()
+    },
+    formatMoney(value) {
+      return Number(value || 0).toFixed(2)
+    },
+    maskPartnerStackKey(value) {
+      if (!value || value.length <= 12 || value.startsWith('part_') || value.startsWith('cus_')) return value
+      return `${value.slice(0, 4)}****${value.slice(-4)}`
+    },
+    toPercent(numerator, denominator) {
+      if (!denominator) return '0.0%'
+      return `${(Number(numerator || 0) * 100 / Number(denominator)).toFixed(1)}%`
     }
   }
 }

@@ -1,5 +1,13 @@
 import request from '@/utils/request'
 
+export function getPartnerStackDashboard(params) {
+  return request({
+    url: '/partnerstack/dashboard',
+    method: 'get',
+    params
+  })
+}
+
 export function getPartnerStackCustomers(params) {
   return request({
     url: '/partnerstack/customers',
