@@ -94,10 +94,6 @@
           <el-input v-model="form.nickName" placeholder="请输入用户昵称" maxlength="20" />
         </el-form-item>
 
-        <el-form-item label="客户Key" prop="partnerCustomerKey">
-          <el-input v-model="form.partnerCustomerKey" placeholder="PartnerStack 客户Key；不填默认使用用户名" maxlength="100" />
-        </el-form-item>
-
         <el-form-item label="佣金比例" prop="commissionRate">
           <div class="commission-field">
             <el-input-number
@@ -121,30 +117,6 @@
       </div>
     </el-dialog>
 
-    <el-dialog title="接口凭证（仅显示这一次）" :visible.sync="credentialOpen" width="680px" append-to-body>
-      <el-alert
-        title="请立即复制并通过安全方式交给下级客户。系统不会保存明文 Secret，关闭后无法再次查看。"
-        type="warning"
-        :closable="false"
-        show-icon
-      />
-      <el-descriptions :column="1" border class="credential-box">
-        <el-descriptions-item label="API 地址">{{ usageApiUrl }}</el-descriptions-item>
-        <el-descriptions-item label="X-Agent-Key">
-          <code>{{ credential.apiKey }}</code>
-          <el-button type="text" @click="copyText(credential.apiKey)">复制</el-button>
-        </el-descriptions-item>
-        <el-descriptions-item label="X-Agent-Secret">
-          <code>{{ credential.apiSecret }}</code>
-          <el-button type="text" @click="copyText(credential.apiSecret)">复制</el-button>
-        </el-descriptions-item>
-      </el-descriptions>
-      <div class="payload-title">上报示例（POST JSON）</div>
-      <pre class="payload-example">{{ payloadExample }}</pre>
-      <div slot="footer">
-        <el-button type="primary" @click="credentialOpen = false">我已保存</el-button>
-      </div>
-    </el-dialog>
   </div>
 </template>
 
@@ -158,7 +130,6 @@ function createDefaultForm() {
     phonenumber: '',
     email: '',
     nickName: '',
-    partnerCustomerKey: '',
     commissionRate: 0,
     remark: ''
   }
@@ -169,10 +140,8 @@ export default {
   data() {
     return {
       open: false,
-      credentialOpen: false,
       loading: false,
       total: 0,
-      credential: { apiKey: '', apiSecret: '' },
       maxCommissionRate: 100,
       queryParams: {
         keyword: '',
@@ -210,23 +179,6 @@ export default {
           { required: true, message: '佣金比例不能为空', trigger: 'change' }
         ]
       }
-    }
-  },
-  computed: {
-    usageApiUrl() {
-      return `${window.location.origin}${process.env.VUE_APP_BASE_API}/openapi/v1/agent/usage`
-    },
-    payloadExample() {
-      return JSON.stringify({
-        requestId: `usage_${Date.now()}`,
-        metric: 'ad_spend',
-        dataCount: 1000,
-        spend: 128.5,
-        currency: 'USD',
-        customerKey: 'customer_001',
-        reportedAt: new Date().toISOString(),
-        remark: '当日消耗'
-      }, null, 2)
     }
   },
   created() {
@@ -272,11 +224,10 @@ export default {
         if (!valid) {
           return
         }
-        addAgent(this.form).then(response => {
+        addAgent(this.form).then(() => {
           this.open = false
           this.queryParams.pageNum = 1
-          this.credential = response.data
-          this.credentialOpen = true
+          this.$message.success('新建代理成功')
           this.getList()
         })
       })
@@ -295,10 +246,6 @@ export default {
       }).catch(() => {
         row[field] = previousValue
       })
-    },
-    copyText(value) {
-      if (!value) return
-      navigator.clipboard.writeText(value).then(() => this.$message.success('已复制'))
     },
     formatMoney(value) {
       return Number(value || 0).toFixed(2)
@@ -380,22 +327,5 @@ export default {
     font-size: 13px;
   }
 
-  .credential-box {
-    margin-top: 18px;
-  }
-
-  .payload-title {
-    margin: 18px 0 8px;
-    color: #606266;
-    font-weight: 600;
-  }
-
-  .payload-example {
-    padding: 14px;
-    overflow: auto;
-    color: #d6deeb;
-    background: #1f2937;
-    border-radius: 6px;
-  }
 }
 </style>
