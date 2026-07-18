@@ -32,6 +32,8 @@ import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.common.exception.ServiceException;
+import com.ruoyi.common.utils.SecurityUtils;
+import com.ruoyi.system.service.AgentDataScopeService;
 import com.ruoyi.system.service.ISysUserService;
 
 /**
@@ -56,10 +58,12 @@ public class PartnerStackController extends BaseController
     private String platformToken;
 
     private final ISysUserService userService;
+    private final AgentDataScopeService agentDataScopeService;
 
-    public PartnerStackController(ISysUserService userService)
+    public PartnerStackController(ISysUserService userService, AgentDataScopeService agentDataScopeService)
     {
         this.userService = userService;
+        this.agentDataScopeService = agentDataScopeService;
     }
 
     /**
@@ -189,10 +193,28 @@ public class PartnerStackController extends BaseController
         try
         {
             Scope scope = access.scope();
-            if (scope.requiresCustomerResolution())
+            if (!scope.matchesAll())
             {
                 JSONArray customerSource = fetchAllItems("/customers", new LinkedHashMap<>(), access.token());
-                scope = resolveScope(scope, customerSource);
+                if (scope.requiresCustomerResolution())
+                {
+                    scope = resolveScope(scope, customerSource);
+                }
+                boolean allowedCustomer = false;
+                for (Object item : customerSource)
+                {
+                    if (item instanceof JSONObject customer
+                            && customerKey.equals(customer.getString("key"))
+                            && matchesScope(customer, scope))
+                    {
+                        allowedCustomer = true;
+                        break;
+                    }
+                }
+                if (!allowedCustomer)
+                {
+                    return AjaxResult.error(403, "无权查看该广告户数据");
+                }
             }
             JSONArray actions = filterItems(fetchAllItems("/actions",
                     buildCommonParams(null, null, PARTNERSTACK_PAGE_SIZE, null, null), access.token()), scope, subId,
@@ -406,22 +428,20 @@ public class PartnerStackController extends BaseController
         {
             throw new ServiceException("当前用户不存在");
         }
-        String userKey = FIXED_PARTNERSTACK_KEY;
-        if (looksLikeAccessToken(userKey))
+        String accessToken = StringUtils.hasText(FIXED_PARTNERSTACK_KEY)
+                ? FIXED_PARTNERSTACK_KEY : platformToken;
+        if (!StringUtils.hasText(accessToken))
         {
-            return new PartnerAccess(userKey, Scope.all(), maskSecret(userKey), user.getUserName());
+            throw new ServiceException("PartnerStack token 未配置");
         }
-        if (!StringUtils.hasText(platformToken))
+        if (SecurityUtils.isAdmin())
         {
-            throw new ServiceException("当前账号绑定的是 PartnerStack 数据Key，但系统未配置 PARTNERSTACK_TOKEN");
+            return new PartnerAccess(accessToken.trim(), Scope.all(), maskSecret(accessToken), user.getUserName());
         }
-        return new PartnerAccess(platformToken.trim(), Scope.from(userKey), userKey, user.getUserName());
-    }
-
-    private boolean looksLikeAccessToken(String value)
-    {
-        return StringUtils.hasText(value) && value.length() >= 32
-                && !value.startsWith("part_") && !value.startsWith("cus_");
+        Set<Long> visibleUserIds = agentDataScopeService.selectSelfAndDescendantUserIds(user.getUserId());
+        Set<String> attributionKeys = agentDataScopeService.selectPartnerAttributionKeys(visibleUserIds);
+        return new PartnerAccess(accessToken.trim(), Scope.from(attributionKeys),
+                String.join(",", attributionKeys), user.getUserName());
     }
 
     private String maskSecret(String value)
@@ -458,7 +478,7 @@ public class PartnerStackController extends BaseController
         }
     }
 
-    private String extractCustomerKey(Object item)
+    private static String extractCustomerKey(Object item)
     {
         if (!(item instanceof JSONObject object))
         {
@@ -681,9 +701,7 @@ public class PartnerStackController extends BaseController
             {
                 continue;
             }
-            if (unresolved.rawKey().equals(customer.getString("customer_key"))
-                    || unresolved.rawKey().equals(customer.getString("shared_id"))
-                    || contains(customer.getJSONArray("sub_ids"), unresolved.rawKey()))
+            if (matchesAttribution(customer, unresolved.attributionKeys()))
             {
                 String customerKey = customer.getString("key");
                 if (StringUtils.hasText(customerKey))
@@ -725,28 +743,47 @@ public class PartnerStackController extends BaseController
         return (minCreated == null || createdAt >= minCreated) && (maxCreated == null || createdAt <= maxCreated);
     }
 
-    private boolean matchesScope(JSONObject item, Scope scope)
+    private static boolean matchesScope(JSONObject item, Scope scope)
     {
         if (scope.matchesAll())
         {
             return true;
         }
-        if (scope.isPartnership())
-        {
-            return scope.rawKey().equals(item.getString("partnership_key"));
-        }
-        String customerKey = extractCustomerKey(item);
-        if (scope.customerKeys().contains(customerKey))
+        if (containsKey(scope.partnershipKeys(), item.getString("partnership_key")))
         {
             return true;
         }
-        if (scope.requiresCustomerResolution())
+        String customerKey = extractCustomerKey(item);
+        if (containsKey(scope.customerKeys(), customerKey))
         {
-            return scope.rawKey().equals(item.getString("customer_key"))
-                    || scope.rawKey().equals(item.getString("shared_id"))
-                    || contains(item.getJSONArray("sub_ids"), scope.rawKey());
+            return true;
         }
-        return false;
+        return matchesAttribution(item, scope.attributionKeys());
+    }
+
+    private static boolean matchesAttribution(JSONObject item, Set<String> attributionKeys)
+    {
+        if (item == null || attributionKeys == null || attributionKeys.isEmpty())
+        {
+            return false;
+        }
+        if (containsKey(attributionKeys, item.getString("customer_key"))
+                || containsKey(attributionKeys, item.getString("shared_id")))
+        {
+            return true;
+        }
+        JSONObject customer = item.getJSONObject("customer");
+        if (customer != null && matchesAttribution(customer, attributionKeys))
+        {
+            return true;
+        }
+        JSONArray subIds = item.getJSONArray("sub_ids");
+        return subIds != null && subIds.stream().anyMatch(value -> attributionKeys.contains(String.valueOf(value)));
+    }
+
+    private static boolean containsKey(Set<String> keys, String value)
+    {
+        return StringUtils.hasText(value) && keys.contains(value);
     }
 
     private boolean matchesSubId(JSONObject item, String subId, String fallbackSubId)
@@ -794,6 +831,11 @@ public class PartnerStackController extends BaseController
         int fromIndex = Math.min((safePageNum - 1) * safePageSize, rows.size());
         int toIndex = Math.min(fromIndex + safePageSize, rows.size());
         return rows.subList(fromIndex, toIndex);
+    }
+
+    static boolean matchesPartnerAttribution(JSONObject item, Collection<String> attributionKeys)
+    {
+        return matchesScope(item, Scope.from(attributionKeys));
     }
 
     private static boolean containsTextIgnoreCase(String value, String query)
@@ -1116,30 +1158,41 @@ public class PartnerStackController extends BaseController
         return value.setScale(2, RoundingMode.HALF_UP);
     }
 
-    private record Scope(String rawKey, String partnershipKey, Set<String> customerKeys,
+    private record Scope(Set<String> attributionKeys, Set<String> partnershipKeys, Set<String> customerKeys,
             boolean requiresCustomerResolution, boolean matchesAll)
     {
         private static Scope all()
         {
-            return new Scope("", null, Set.of(), false, true);
+            return new Scope(Set.of(), Set.of(), Set.of(), false, true);
         }
 
-        private static Scope from(String rawKey)
+        private static Scope from(Collection<String> rawKeys)
         {
-            if (rawKey.startsWith("part_"))
+            Set<String> attributionKeys = new HashSet<>();
+            Set<String> partnershipKeys = new HashSet<>();
+            Set<String> customerKeys = new HashSet<>();
+            if (rawKeys != null)
             {
-                return new Scope(rawKey, rawKey, Set.of(), false, false);
+                for (String rawKey : rawKeys)
+                {
+                    if (!StringUtils.hasText(rawKey))
+                    {
+                        continue;
+                    }
+                    String key = rawKey.trim();
+                    attributionKeys.add(key);
+                    if (key.startsWith("part_"))
+                    {
+                        partnershipKeys.add(key);
+                    }
+                    else if (key.startsWith("cus_"))
+                    {
+                        customerKeys.add(key);
+                    }
+                }
             }
-            if (rawKey.startsWith("cus_"))
-            {
-                return new Scope(rawKey, null, Set.of(rawKey), false, false);
-            }
-            return new Scope(rawKey, null, Set.of(), true, false);
-        }
-
-        private boolean isPartnership()
-        {
-            return StringUtils.hasText(partnershipKey);
+            return new Scope(Set.copyOf(attributionKeys), Set.copyOf(partnershipKeys), Set.copyOf(customerKeys),
+                    !attributionKeys.isEmpty(), false);
         }
 
         private String queryCustomerKey()
@@ -1149,7 +1202,9 @@ public class PartnerStackController extends BaseController
 
         private Scope withCustomerKeys(Set<String> resolvedCustomerKeys)
         {
-            return new Scope(rawKey, null, Set.copyOf(resolvedCustomerKeys), true, false);
+            Set<String> combinedCustomerKeys = new HashSet<>(customerKeys);
+            combinedCustomerKeys.addAll(resolvedCustomerKeys);
+            return new Scope(attributionKeys, partnershipKeys, Set.copyOf(combinedCustomerKeys), false, false);
         }
     }
 

@@ -2,6 +2,7 @@ package com.ruoyi.web.controller.agent;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,6 +19,7 @@ import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.system.domain.AgentClient;
 import com.ruoyi.system.service.AgentClientService;
+import com.ruoyi.system.service.AgentDataScopeService;
 
 /**
  * 下级代理管理。
@@ -27,19 +29,26 @@ import com.ruoyi.system.service.AgentClientService;
 public class AgentManageController extends BaseController
 {
     private final AgentClientService agentClientService;
+    private final AgentDataScopeService agentDataScopeService;
 
-    public AgentManageController(AgentClientService agentClientService)
+    public AgentManageController(AgentClientService agentClientService, AgentDataScopeService agentDataScopeService)
     {
         this.agentClientService = agentClientService;
+        this.agentDataScopeService = agentDataScopeService;
     }
 
     @GetMapping("/list")
     public TableDataInfo list(@RequestParam(required = false) String keyword)
     {
+        Set<Long> visibleUserIds = resolveManagedAgentUserIds(SecurityUtils.isAdmin(), getUserId());
         startPage();
-        Long ownerUserId = SecurityUtils.isAdmin() ? null : getUserId();
-        List<AgentClient> list = agentClientService.selectAgentList(ownerUserId, keyword);
+        List<AgentClient> list = agentClientService.selectAgentList(visibleUserIds, keyword);
         return getDataTable(list);
+    }
+
+    Set<Long> resolveManagedAgentUserIds(boolean admin, Long currentUserId)
+    {
+        return admin ? null : agentDataScopeService.selectDescendantUserIds(currentUserId);
     }
 
     @Log(title = "代理管理", businessType = BusinessType.INSERT)

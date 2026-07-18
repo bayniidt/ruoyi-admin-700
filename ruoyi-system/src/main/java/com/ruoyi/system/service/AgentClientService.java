@@ -6,6 +6,7 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Collection;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,9 +35,9 @@ public class AgentClientService
         this.sysUserService = sysUserService;
     }
 
-    public List<AgentClient> selectAgentList(Long ownerUserId, String keyword)
+    public List<AgentClient> selectAgentList(Collection<Long> visibleUserIds, String keyword)
     {
-        return agentClientMapper.selectAgentList(ownerUserId, StringUtils.trim(keyword));
+        return agentClientMapper.selectAgentList(visibleUserIds, StringUtils.trim(keyword));
     }
 
     @Transactional
@@ -63,6 +64,10 @@ public class AgentClientService
         String passwordHash = SecurityUtils.encryptPassword(agent.getPassword() == null ? "" : agent.getPassword());
         String partnerCustomerKey = StringUtils.isBlank(agent.getPartnerCustomerKey())
                 ? agent.getUserName().trim() : agent.getPartnerCustomerKey().trim();
+        if (agentClientMapper.countByPartnerCustomerKey(partnerCustomerKey) > 0)
+        {
+            throw new ServiceException("PartnerStack 数据Key已被其他代理绑定");
+        }
         SysUser sysUser = new SysUser();
         sysUser.setDeptId(ownerDeptId);
         sysUser.setUserName(agent.getUserName().trim());

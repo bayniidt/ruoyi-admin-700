@@ -23,19 +23,32 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         order by id desc
     </select>
 
-    <select id="selectDownlineSubIdList" resultMap="AgentSubIdResult">
-        select s.id, s.subid, s.name, s.status, s.source, s.created_by, s.created_by_name, s.promo_link, s.bound_at
+    <select id="selectSubIdListByUserIds" resultMap="AgentSubIdResult">
+        select id, subid, name, status, source, created_by, created_by_name, promo_link, bound_at
+        from agent_subid
+        where created_by in
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">
+            #{userId}
+        </foreach>
+        order by id desc
+    </select>
+
+    <select id="selectSubIdsByUserIds" resultType="String">
+        select distinct s.subid
         from agent_subid s
-        join agent_client a on a.sys_user_id = s.created_by
-        where a.owner_user_id = #{ownerUserId}
-        order by s.id desc
+        where s.status = 1
+          and s.created_by in
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">
+            #{userId}
+        </foreach>
+          and (select count(1) from agent_subid all_subids
+               where lower(all_subids.subid) = lower(s.subid)) = 1
     </select>
 
     <select id="countBySubid" resultType="int">
         select count(1)
         from agent_subid
-        where created_by = #{createdBy}
-          and lower(subid) = lower(#{subid})
+        where lower(subid) = lower(#{subid})
     </select>
 
     <insert id="insertAgentSubId" parameterType="com.ruoyi.system.domain.AgentSubId" useGeneratedKeys="true" keyProperty="id">

@@ -36,13 +36,41 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         from agent_client a
         left join agent_usage u on u.agent_id = a.agent_id
         <where>
-            <if test="ownerUserId != null">(a.owner_user_id = #{ownerUserId} or a.sys_user_id = #{ownerUserId})</if>
+            <choose>
+                <when test="visibleUserIds != null and !visibleUserIds.isEmpty()">
+                    a.sys_user_id in
+                    <foreach collection="visibleUserIds" item="userId" open="(" separator="," close=")">
+                        #{userId}
+                    </foreach>
+                </when>
+                <when test="visibleUserIds != null">
+                    1 = 0
+                </when>
+            </choose>
             <if test="keyword != null and keyword != ''">
                 and (a.user_name like concat('%', #{keyword}, '%') or a.nick_name like concat('%', #{keyword}, '%'))
             </if>
         </where>
         group by a.agent_id
         order by a.agent_id desc
+    </select>
+
+    <select id="selectAllAgentRelations" resultMap="AgentClientResult">
+        select agent_id, owner_user_id, sys_user_id
+        from agent_client
+    </select>
+
+    <select id="selectPartnerKeysByUserIds" resultType="String">
+        select distinct a.partner_customer_key
+        from agent_client a
+        where a.partner_customer_key is not null
+          and trim(a.partner_customer_key) &lt;&gt; ''
+          and a.sys_user_id in
+        <foreach collection="userIds" item="userId" open="(" separator="," close=")">
+            #{userId}
+        </foreach>
+          and (select count(1) from agent_client all_agents
+               where lower(all_agents.partner_customer_key) = lower(a.partner_customer_key)) = 1
     </select>
 
     <select id="selectAgentByApiKey" parameterType="String" resultMap="AgentClientResult">
@@ -63,6 +91,12 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <select id="countByOwnerAndUserName" resultType="int">
         select count(1) from agent_client where owner_user_id = #{ownerUserId} and user_name = #{userName}
+    </select>
+
+    <select id="countByPartnerCustomerKey" resultType="int">
+        select count(1)
+        from agent_client
+        where lower(partner_customer_key) = lower(#{partnerCustomerKey})
     </select>
 
     <insert id="insertAgent" parameterType="AgentClient" useGeneratedKeys="true" keyProperty="agentId">

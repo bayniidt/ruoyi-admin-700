@@ -2,6 +2,7 @@ package com.ruoyi.web.controller.agent;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -14,16 +15,20 @@ import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.system.domain.AgentSubId;
 import com.ruoyi.system.service.AgentSubIdService;
+import com.ruoyi.system.service.AgentDataScopeService;
+import com.ruoyi.common.utils.SecurityUtils;
 
 @RestController
 @RequestMapping("/agent/subid")
 public class AgentSubIdController extends BaseController
 {
     private final AgentSubIdService agentSubIdService;
+    private final AgentDataScopeService agentDataScopeService;
 
-    public AgentSubIdController(AgentSubIdService agentSubIdService)
+    public AgentSubIdController(AgentSubIdService agentSubIdService, AgentDataScopeService agentDataScopeService)
     {
         this.agentSubIdService = agentSubIdService;
+        this.agentDataScopeService = agentDataScopeService;
     }
 
     @GetMapping("/list")
@@ -36,7 +41,16 @@ public class AgentSubIdController extends BaseController
     @GetMapping("/downline")
     public TableDataInfo downline()
     {
-        List<AgentSubId> list = agentSubIdService.selectDownlineSubIdList(getUserId());
+        Set<Long> userIds;
+        if (SecurityUtils.isAdmin())
+        {
+            userIds = agentDataScopeService.selectAllAgentUserIds();
+        }
+        else
+        {
+            userIds = agentDataScopeService.selectDescendantUserIds(getUserId());
+        }
+        List<AgentSubId> list = agentSubIdService.selectSubIdListByUserIds(userIds, getUserId());
         return getDataTable(list);
     }
 

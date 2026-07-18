@@ -3,6 +3,7 @@ package com.ruoyi.system.service;
 import jakarta.annotation.PostConstruct;
 import java.util.Date;
 import java.util.List;
+import java.util.Collection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,7 +46,7 @@ public class AgentSubIdService
                         + "update_time datetime comment '更新时间',"
                         + "remark varchar(500) default null comment '备注',"
                         + "primary key (id),"
-                        + "unique key uk_agent_subid_owner (created_by, subid),"
+                        + "unique key uk_agent_subid_global (subid),"
                         + "key idx_agent_subid_owner (created_by)"
                         + ") engine=innodb comment='代理SubId绑定表'");
         jdbcTemplate.update(
@@ -68,10 +69,14 @@ public class AgentSubIdService
         return list;
     }
 
-    public List<AgentSubId> selectDownlineSubIdList(Long ownerUserId)
+    public List<AgentSubId> selectSubIdListByUserIds(Collection<Long> userIds, Long linkOwnerUserId)
     {
-        List<AgentSubId> list = agentSubIdMapper.selectDownlineSubIdList(ownerUserId);
-        fillPromoLinks(list, ownerUserId);
+        if (userIds == null || userIds.isEmpty())
+        {
+            return List.of();
+        }
+        List<AgentSubId> list = agentSubIdMapper.selectSubIdListByUserIds(userIds);
+        fillPromoLinks(list, linkOwnerUserId);
         return list;
     }
 
@@ -91,9 +96,9 @@ public class AgentSubIdService
         {
             throw new ServiceException("长度必须介于 2 和 50 之间");
         }
-        if (agentSubIdMapper.countBySubid(userId, normalizedSubid) > 0)
+        if (agentSubIdMapper.countBySubid(normalizedSubid) > 0)
         {
-            throw new ServiceException("该 SubId 已存在");
+            throw new ServiceException("该 SubId 已被其他代理使用，请更换一个值");
         }
 
         AgentSubId entity = new AgentSubId();

@@ -25,6 +25,7 @@ create table if not exists agent_client (
   primary key (agent_id),
   unique key uk_agent_api_key (api_key),
   unique key uk_agent_sys_user (sys_user_id),
+  unique key uk_agent_partner_customer (partner_customer_key),
   unique key uk_agent_owner_username (owner_user_id, user_name),
   key idx_agent_owner (owner_user_id)
 ) engine=innodb comment='下级代理接口账号';
@@ -83,6 +84,20 @@ set u.partner_stack_key = a.partner_customer_key
 where (u.partner_stack_key is null or u.partner_stack_key = '')
   and a.partner_customer_key is not null and a.partner_customer_key <> '';
 
+-- PartnerStack 归属Key必须全局唯一；存在历史重复值时先不加索引，运行时会拒绝继续创建重复值，
+-- 且权限查询会忽略历史重复Key，避免不同代理分支互相看到数据。
+set @ddl = if((select count(*) from information_schema.statistics where table_schema = database()
+    and table_name = 'agent_client' and index_name = 'uk_agent_partner_customer') = 0
+    and (select count(*) from (
+        select lower(partner_customer_key)
+        from agent_client
+        where partner_customer_key is not null and partner_customer_key <> ''
+        group by lower(partner_customer_key) having count(*) > 1
+    ) duplicate_partner_keys) = 0,
+    'alter table agent_client add unique key uk_agent_partner_customer (partner_customer_key)',
+    'select 1');
+prepare stmt from @ddl; execute stmt; deallocate prepare stmt;
+
 -- 代理业务菜单。使用固定 ID，便于角色授权和重复部署。
 insert ignore into sys_menu values
 (2000, '代理管理', 0, 1, 'agent', null, '', '', 1, 0, 'M', '0', '0', '', 'peoples', 'admin', sysdate(), '', null, '代理业务目录'),
@@ -138,9 +153,20 @@ create table if not exists agent_subid (
   update_time        datetime                                comment '更新时间',
   remark             varchar(500)    default null            comment '备注',
   primary key (id),
-  unique key uk_agent_subid_owner (created_by, subid),
+  unique key uk_agent_subid_global (subid),
   key idx_agent_subid_owner (created_by)
 ) engine=innodb comment='代理SubId绑定表';
+
+set @ddl = if((select count(*) from information_schema.statistics where table_schema = database()
+    and table_name = 'agent_subid' and index_name = 'uk_agent_subid_global') = 0
+    and (select count(*) from (
+        select lower(subid)
+        from agent_subid
+        group by lower(subid) having count(*) > 1
+    ) duplicate_subids) = 0,
+    'alter table agent_subid add unique key uk_agent_subid_global (subid)',
+    'select 1');
+prepare stmt from @ddl; execute stmt; deallocate prepare stmt;
 
 insert into sys_config(config_name, config_key, config_value, config_type, create_by, create_time, remark)
 select '代理SubId推广基础链接', 'agent.subid.base-link', '', 'N', 'admin', sysdate(),

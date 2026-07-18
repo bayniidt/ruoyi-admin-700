@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import com.alibaba.fastjson2.JSONObject;
@@ -37,5 +38,20 @@ class PartnerStackControllerTest
                 PartnerStackController.pageRows(rows, 2, 10));
         assertEquals(List.of(31, 32, 33), PartnerStackController.pageRows(rows, 4, 10));
         assertTrue(PartnerStackController.pageRows(rows, 5, 10).isEmpty());
+    }
+
+    @Test
+    void matchesOnlyPartnershipCustomerOrSubIdInsideTheAgentScope()
+    {
+        JSONObject event = new JSONObject();
+        event.put("partnership_key", "part_branch_b");
+        event.put("customer", JSONObject.of(
+                "key", "cus_branch_b",
+                "sub_ids", List.of("sub_branch_b")));
+
+        assertTrue(PartnerStackController.matchesPartnerAttribution(event, Set.of("part_branch_b")));
+        assertTrue(PartnerStackController.matchesPartnerAttribution(event, Set.of("cus_branch_b")));
+        assertTrue(PartnerStackController.matchesPartnerAttribution(event, Set.of("sub_branch_b")));
+        assertFalse(PartnerStackController.matchesPartnerAttribution(event, Set.of("sub_other_branch")));
     }
 }
