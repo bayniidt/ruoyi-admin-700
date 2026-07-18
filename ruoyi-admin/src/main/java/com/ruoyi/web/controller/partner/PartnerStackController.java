@@ -86,10 +86,13 @@ public class PartnerStackController extends BaseController
             Scope scope = access.scope();
             Map<String, Object> customerParams = new LinkedHashMap<>();
             JSONArray customerSource;
-            if (scope.requiresCustomerResolution())
+            if (scope.requiresCustomerResolution() || StringUtils.hasText(subId))
             {
                 customerSource = fetchAllItems("/customers", customerParams, access.token());
-                scope = resolveScope(scope, customerSource);
+                if (scope.requiresCustomerResolution())
+                {
+                    scope = resolveScope(scope, customerSource);
+                }
             }
             else
             {
@@ -100,14 +103,31 @@ public class PartnerStackController extends BaseController
             JSONArray customers = filterItems(customerSource, scope, subId, minCreated, maxCreated,
                     access.fallbackSubId());
             Map<String, Object> eventParams = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
-            putIfPresent(eventParams, "customer_key", scope.queryCustomerKey());
-            JSONArray actions = filterItems(fetchAllItems("/actions", eventParams, access.token()), scope, subId,
-                    minCreated, maxCreated, access.fallbackSubId());
-            JSONArray transactions = filterItems(fetchAllItems("/transactions",
-                    buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null), access.token()), scope, subId,
-                    minCreated, maxCreated, access.fallbackSubId());
-            JSONArray rewards = filterItems(fetchAllItems("/rewards", eventParams, access.token()), scope, subId,
-                    minCreated, maxCreated, access.fallbackSubId());
+            Set<String> selectedCustomerKeys = StringUtils.hasText(subId)
+                    ? matchingCustomerKeys(customerSource, scope, subId, access.fallbackSubId())
+                    : Set.of();
+            JSONArray actionSource;
+            JSONArray transactionSource;
+            JSONArray rewardSource;
+            if (StringUtils.hasText(subId))
+            {
+                actionSource = fetchAllItemsForCustomers("/actions", eventParams, access.token(), selectedCustomerKeys);
+                transactionSource = fetchAllItemsForCustomers("/transactions", eventParams, access.token(), selectedCustomerKeys);
+                rewardSource = fetchAllItemsForCustomers("/rewards", eventParams, access.token(), selectedCustomerKeys);
+            }
+            else
+            {
+                putIfPresent(eventParams, "customer_key", scope.queryCustomerKey());
+                actionSource = fetchAllItems("/actions", eventParams, access.token());
+                transactionSource = fetchAllItems("/transactions", eventParams, access.token());
+                rewardSource = fetchAllItems("/rewards", eventParams, access.token());
+            }
+            JSONArray actions = filterItems(actionSource, scope, subId, minCreated, maxCreated,
+                    access.fallbackSubId());
+            JSONArray transactions = filterItems(transactionSource, scope, subId, minCreated, maxCreated,
+                    access.fallbackSubId());
+            JSONArray rewards = filterItems(rewardSource, scope, subId, minCreated, maxCreated,
+                    access.fallbackSubId());
 
             if (StringUtils.hasText(transactionId))
             {
@@ -118,8 +138,8 @@ public class PartnerStackController extends BaseController
                         ? null : ((JSONObject) item).getJSONObject("source").getString("key"), transactionId));
             }
 
-            return success(buildDashboard(access.displayKey(), access.fallbackSubId(), customers, actions,
-                    transactions, rewards));
+            return success(buildDashboard(access.displayKey(), access.fallbackSubId(), access.visibleSubIds(), subId,
+                    customers, actions, transactions, rewards));
         }
         catch (PartnerStackApiException e)
         {
@@ -436,12 +456,16 @@ public class PartnerStackController extends BaseController
         }
         if (SecurityUtils.isAdmin())
         {
-            return new PartnerAccess(accessToken.trim(), Scope.all(), maskSecret(accessToken), user.getUserName());
+            Set<Long> visibleUserIds = new HashSet<>(agentDataScopeService.selectAllAgentUserIds());
+            visibleUserIds.add(user.getUserId());
+            return new PartnerAccess(accessToken.trim(), Scope.all(), maskSecret(accessToken), user.getUserName(),
+                    agentDataScopeService.selectSubIdsByUserIds(visibleUserIds));
         }
         Set<Long> visibleUserIds = agentDataScopeService.selectSelfAndDescendantUserIds(user.getUserId());
         Set<String> attributionKeys = agentDataScopeService.selectPartnerAttributionKeys(visibleUserIds);
         return new PartnerAccess(accessToken.trim(), Scope.from(attributionKeys),
-                String.join(",", attributionKeys), user.getUserName());
+                String.join(",", attributionKeys), user.getUserName(),
+                agentDataScopeService.selectSubIdsByUserIds(visibleUserIds));
     }
 
     private String maskSecret(String value)
@@ -643,6 +667,19 @@ public class PartnerStackController extends BaseController
         throw new PartnerStackApiException(502, "PartnerStack 返回数据超过单次汇总上限，请缩小日期范围");
     }
 
+    private JSONArray fetchAllItemsForCustomers(String path, Map<String, Object> sourceParams, String accessToken,
+            Set<String> customerKeys)
+    {
+        JSONArray result = new JSONArray();
+        for (String customerKey : customerKeys)
+        {
+            Map<String, Object> params = new LinkedHashMap<>(sourceParams);
+            params.put("customer_key", customerKey);
+            result.addAll(fetchAllItems(path, params, accessToken));
+        }
+        return result;
+    }
+
     private JSONObject requestPartnerStack(String path, Map<String, Object> params, String accessToken)
     {
         String query = buildQuery(params);
@@ -729,6 +766,26 @@ public class PartnerStackController extends BaseController
         return result;
     }
 
+    static Set<String> matchingCustomerKeys(JSONArray customers, Scope scope, String subId, String fallbackSubId)
+    {
+        Set<String> customerKeys = new HashSet<>();
+        for (Object item : customers)
+        {
+            if (!(item instanceof JSONObject customer)
+                    || !matchesScope(customer, scope)
+                    || !matchesSubIdValue(customer, subId, fallbackSubId))
+            {
+                continue;
+            }
+            String customerKey = customer.getString("key");
+            if (StringUtils.hasText(customerKey))
+            {
+                customerKeys.add(customerKey);
+            }
+        }
+        return customerKeys;
+    }
+
     private boolean matchesCreatedAt(JSONObject item, Long minCreated, Long maxCreated)
     {
         if (minCreated == null && maxCreated == null)
@@ -788,17 +845,27 @@ public class PartnerStackController extends BaseController
 
     private boolean matchesSubId(JSONObject item, String subId, String fallbackSubId)
     {
+        return matchesSubIdValue(item, subId, fallbackSubId);
+    }
+
+    private static boolean matchesSubIdValue(JSONObject item, String subId, String fallbackSubId)
+    {
         if (!StringUtils.hasText(subId))
         {
             return true;
         }
         JSONObject customer = item.getJSONObject("customer");
         JSONArray subIds = customer == null ? item.getJSONArray("sub_ids") : customer.getJSONArray("sub_ids");
-        return contains(subIds, subId)
+        return containsValue(subIds, subId)
                 || ((subIds == null || subIds.isEmpty()) && subId.equals(fallbackSubId));
     }
 
     private boolean contains(JSONArray values, String expected)
+    {
+        return containsValue(values, expected);
+    }
+
+    private static boolean containsValue(JSONArray values, String expected)
     {
         if (values == null || !StringUtils.hasText(expected))
         {
@@ -939,8 +1006,8 @@ public class PartnerStackController extends BaseController
         return row;
     }
 
-    private JSONObject buildDashboard(String partnerStackKey, String fallbackSubId, JSONArray customers,
-            JSONArray actions, JSONArray transactions, JSONArray rewards)
+    private JSONObject buildDashboard(String partnerStackKey, String fallbackSubId, Set<String> visibleSubIds,
+            String selectedSubId, JSONArray customers, JSONArray actions, JSONArray transactions, JSONArray rewards)
     {
         Map<String, JSONObject> rows = new LinkedHashMap<>();
         long paidCustomers = 0;
@@ -1013,6 +1080,7 @@ public class PartnerStackController extends BaseController
         }
 
         List<JSONObject> sortedRows = aggregateBySubId(rows.values(), fallbackSubId);
+        addMissingSubIdRows(sortedRows, visibleSubIds, selectedSubId);
 
         JSONObject summary = new JSONObject();
         summary.put("customers", customers.size());
@@ -1033,8 +1101,45 @@ public class PartnerStackController extends BaseController
         result.put("partnerStackKey", partnerStackKey);
         result.put("summary", summary);
         result.put("rows", sortedRows);
-        result.put("subIds", collectSubIds(fallbackSubId, customers, actions, transactions, rewards));
+        JSONArray subIds = collectSubIds(fallbackSubId, customers, actions, transactions, rewards);
+        visibleSubIds.forEach(value -> {
+            if (!subIds.contains(value))
+            {
+                subIds.add(value);
+            }
+        });
+        result.put("subIds", subIds);
         return result;
+    }
+
+    static void addMissingSubIdRows(List<JSONObject> rows, Collection<String> visibleSubIds, String selectedSubId)
+    {
+        Set<String> existingSubIds = new HashSet<>();
+        rows.forEach(row -> existingSubIds.add(row.getString("subId")));
+        for (String subId : visibleSubIds)
+        {
+            if (!StringUtils.hasText(subId)
+                    || (StringUtils.hasText(selectedSubId) && !selectedSubId.equals(subId))
+                    || !existingSubIds.add(subId))
+            {
+                continue;
+            }
+            JSONObject row = new JSONObject();
+            row.put("subId", subId);
+            row.put("rawClicks", 0L);
+            row.put("uniqueClicks", 0L);
+            row.put("signups", 0L);
+            row.put("paidSignups", 0L);
+            row.put("actions", 0L);
+            row.put("validActions", 0L);
+            row.put("transactions", 0L);
+            row.put("transactionAmount", BigDecimal.ZERO.setScale(2));
+            row.put("rewards", 0L);
+            row.put("rewardAmount", BigDecimal.ZERO.setScale(2));
+            rows.add(row);
+        }
+        rows.sort(Comparator.comparing((JSONObject row) -> row.getBigDecimal("transactionAmount")).reversed()
+                .thenComparing(row -> row.getString("subId"), Comparator.nullsLast(String::compareTo)));
     }
 
     private JSONObject dashboardRow(Map<String, JSONObject> rows, JSONObject item, String fallbackSubId)
@@ -1158,10 +1263,10 @@ public class PartnerStackController extends BaseController
         return value.setScale(2, RoundingMode.HALF_UP);
     }
 
-    private record Scope(Set<String> attributionKeys, Set<String> partnershipKeys, Set<String> customerKeys,
+    record Scope(Set<String> attributionKeys, Set<String> partnershipKeys, Set<String> customerKeys,
             boolean requiresCustomerResolution, boolean matchesAll)
     {
-        private static Scope all()
+        static Scope all()
         {
             return new Scope(Set.of(), Set.of(), Set.of(), false, true);
         }
@@ -1208,7 +1313,8 @@ public class PartnerStackController extends BaseController
         }
     }
 
-    private record PartnerAccess(String token, Scope scope, String displayKey, String fallbackSubId)
+    private record PartnerAccess(String token, Scope scope, String displayKey, String fallbackSubId,
+            Set<String> visibleSubIds)
     {
     }
 

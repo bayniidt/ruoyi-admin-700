@@ -21,3 +21,18 @@ export function createSubId(data) {
     data
   })
 }
+
+export function getAssignableSubIdOwners() {
+  return request({
+    url: '/agent/subid/assignable-owners',
+    method: 'get'
+  })
+}
+
+export function assignSubIdOwner(subIdRecordId, data) {
+  return request({
+    url: `/agent/subid/${subIdRecordId}/owner`,
+    method: 'put',
+    data
+  })
+}

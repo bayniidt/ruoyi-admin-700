@@ -113,6 +113,21 @@ public class AgentSubIdService
         return entity;
     }
 
+    @Transactional
+    public void assignOwner(Long subIdRecordId, Long targetUserId, String targetUserName,
+            Collection<Long> manageableOwnerUserIds, String updateBy)
+    {
+        if (subIdRecordId == null || targetUserId == null || StringUtils.isEmpty(targetUserName))
+        {
+            throw new ServiceException("SubId 或目标拥有者不能为空");
+        }
+        if (agentSubIdMapper.updateSubIdOwner(subIdRecordId, targetUserId, targetUserName,
+                manageableOwnerUserIds, updateBy) == 0)
+        {
+            throw new ServiceException("SubId 不存在或无权分配");
+        }
+    }
+
     private String buildPromoLink(Long userId, String subid)
     {
         String baseLink = resolveBaseLink(userId);

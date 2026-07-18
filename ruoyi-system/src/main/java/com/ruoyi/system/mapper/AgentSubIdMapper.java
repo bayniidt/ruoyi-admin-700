@@ -16,4 +16,10 @@ public interface AgentSubIdMapper
     int countBySubid(@Param("subid") String subid);
 
     int insertAgentSubId(AgentSubId subId);
+
+    int updateSubIdOwner(@Param("id") Long id,
+            @Param("targetUserId") Long targetUserId,
+            @Param("targetUserName") String targetUserName,
+            @Param("manageableOwnerUserIds") Collection<Long> manageableOwnerUserIds,
+            @Param("updateBy") String updateBy);
 }

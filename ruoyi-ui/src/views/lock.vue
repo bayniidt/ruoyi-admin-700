@@ -36,7 +36,7 @@
 <script>
 import { mapGetters } from 'vuex'
 import { unlockScreen } from '@/api/login'
-import defAva from '@/assets/images/profile.jpg'
+import defAva from '@/assets/images/logo33.png'
 
 export default {
   name: 'LockScreen',

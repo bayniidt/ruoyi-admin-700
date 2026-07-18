@@ -59,4 +59,25 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         )
     </insert>
 
+    <update id="updateSubIdOwner">
+        update agent_subid
+        set created_by = #{targetUserId},
+            created_by_name = #{targetUserName},
+            bound_at = sysdate(),
+            update_by = #{updateBy},
+            update_time = sysdate()
+        where id = #{id}
+        <choose>
+            <when test="manageableOwnerUserIds != null and !manageableOwnerUserIds.isEmpty()">
+                and created_by in
+                <foreach collection="manageableOwnerUserIds" item="ownerUserId" open="(" separator="," close=")">
+                    #{ownerUserId}
+                </foreach>
+            </when>
+            <when test="manageableOwnerUserIds != null">
+                and 1 = 0
+            </when>
+        </choose>
+    </update>
+
 </mapper>

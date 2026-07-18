@@ -64,6 +64,10 @@
       margin-right: 10px !important;
     }
 
+    .el-submenu__icon-arrow {
+      color: $base-menu-color !important;
+    }
+
     .el-menu {
       border: none;
       height: 100%;
@@ -82,7 +86,8 @@
     .submenu-title-noDropdown,
     .el-submenu__title {
       &:hover {
-        background-color: rgba(0, 0, 0, 0.06) !important;
+        background-color: $base-sub-menu-hover !important;
+        color: $base-menu-color-hover !important;
       }
     }
 
@@ -95,7 +100,8 @@
       min-width: $base-sidebar-width !important;
 
       &:hover {
-        background-color: rgba(0, 0, 0, 0.06) !important;
+        background-color: $base-sub-menu-hover !important;
+        color: $base-menu-color-hover !important;
       }
     }
 
@@ -115,12 +121,14 @@
 
       .el-menu-item.is-active {
         position: relative;
+        color: $base-menu-color-active !important;
+        background-color: $base-sub-menu-active-background !important;
 
         &::before {
           content: '';
           position: absolute;
           inset: 0;
-          background-color: var(--current-color-dark-bg, rgba(64, 158, 255, 0.2));
+          background-color: transparent;
           border-right: 3px solid var(--current-color, #409eff);
           pointer-events: none;
           z-index: 1;
@@ -128,7 +136,13 @@
       }
 
       .el-submenu.is-active > .el-submenu__title {
-        color: var(--current-color, #409eff) !important;
+        color: $base-menu-color-active !important;
+        background-color: $base-menu-active-background !important;
+
+        .svg-icon,
+        .el-submenu__icon-arrow {
+          color: $base-menu-color-active !important;
+        }
       }
 
       .el-menu-item:not(.is-active),
@@ -147,7 +161,13 @@
         }
 
         &:hover::before {
-          background-color: var(--current-color-dark-bg, rgba(64, 158, 255, 0.2));
+          // Hover 背景由菜单元素自身绘制，避免伪元素覆盖图标和文字。
+          background-color: transparent;
+        }
+
+        &:hover {
+          background-color: $base-sub-menu-hover !important;
+          color: $base-menu-color-hover !important;
         }
       }
     }
@@ -295,8 +315,8 @@
   .nest-menu .el-submenu>.el-submenu__title,
   .el-menu-item {
     &:hover {
-      // you can use $subMenuHover
-      background-color: rgba(0, 0, 0, 0.06) !important;
+      background-color: $base-sub-menu-hover !important;
+      color: $base-menu-color-hover !important;
     }
   }
 

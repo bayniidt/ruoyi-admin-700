@@ -59,10 +59,10 @@
         <el-table
           :data="tableData"
           v-loading="loading"
-          empty-text="当前条件下暂无 PartnerStack 数据"
+          empty-text="暂无数据"
           border
         >
-          <el-table-column prop="subId" label="SUBID1" min-width="150">
+          <el-table-column prop="subId" label="SUBID" min-width="150">
             <template slot-scope="scope"><span class="subid-link">{{ scope.row.subId || '-' }}</span></template>
           </el-table-column>
           <el-table-column prop="rawClicks" label="总点击" min-width="145" align="right">
@@ -168,7 +168,9 @@ export default {
         this.partnerStackKey = data.partnerStackKey || this.partnerStackKey
         this.summary = { ...emptySummary(), ...(data.summary || {}) }
         this.tableData = data.rows || []
-        this.subIdOptions = data.subIds || []
+        this.subIdOptions = this.filters.subId
+          ? [...new Set([...this.subIdOptions, ...(data.subIds || [])])]
+          : (data.subIds || [])
       } finally {
         this.loading = false
       }

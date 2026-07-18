@@ -77,6 +77,18 @@ public class AgentDataScopeService
         return keys;
     }
 
+    /** Active SubIds owned by users in this scope, including SubIds with no PartnerStack activity yet. */
+    public Set<String> selectSubIdsByUserIds(Collection<Long> userIds)
+    {
+        if (userIds == null || userIds.isEmpty())
+        {
+            return Collections.emptySet();
+        }
+        Set<String> subIds = new LinkedHashSet<>();
+        addNonBlank(subIds, agentSubIdMapper.selectSubIdsByUserIds(userIds));
+        return subIds;
+    }
+
     static Set<Long> collectSelfAndDescendants(Long userId, List<AgentClient> agents)
     {
         Map<Long, Set<Long>> childrenByOwner = new HashMap<>();

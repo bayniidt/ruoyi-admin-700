@@ -23,6 +23,11 @@
             </el-table-column>
             <el-table-column prop="ownerLabel" label="拥有者" min-width="160" />
             <el-table-column prop="bindTime" label="绑定时间" min-width="180" />
+            <el-table-column label="操作" width="140" fixed="right">
+              <template slot-scope="scope">
+                <el-button type="text" icon="el-icon-user" @click="openAssignDialog(scope.row)">分配拥有者</el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </el-tab-pane>
 
@@ -68,11 +73,44 @@
         <el-button type="primary" @click="submitForm">确 定</el-button>
       </div>
     </el-dialog>
+
+    <el-dialog title="分配 SubId 拥有者" :visible.sync="assignOpen" width="460px" append-to-body>
+      <el-form label-width="90px">
+        <el-form-item label="SubId">
+          <el-input :value="assignForm.subId" disabled />
+        </el-form-item>
+        <el-form-item label="目标拥有者" required label-width="120px">
+          <el-select
+            v-model="assignForm.ownerUserId"
+            placeholder="请选择下级账号"
+            filterable
+            style="width: 100%"
+          >
+            <el-option
+              v-for="owner in assignableOwners"
+              :key="owner.userId"
+              :label="ownerLabel(owner)"
+              :value="owner.userId"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <div slot="footer" class="dialog-footer">
+        <el-button @click="assignOpen = false">取 消</el-button>
+        <el-button type="primary" :loading="assigning" @click="submitAssignOwner">确 定</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script>
-import { createSubId, getDownlineSubIdList, getMySubIdList } from '@/api/agent-subid'
+import {
+  assignSubIdOwner,
+  createSubId,
+  getAssignableSubIdOwners,
+  getDownlineSubIdList,
+  getMySubIdList
+} from '@/api/agent-subid'
 
 function createForm() {
   return {
@@ -87,6 +125,10 @@ export default {
       activeTab: 'mine',
       loading: false,
       open: false,
+      assignOpen: false,
+      assigning: false,
+      assignableOwners: [],
+      assignForm: { recordId: null, subId: '', ownerUserId: null },
       form: createForm(),
       mySubIds: [],
       downlineSubIds: [],
@@ -118,6 +160,7 @@ export default {
     },
     toSubIdRow(item) {
       return {
+        recordId: item.id,
         subId: item.subid || item.subId || '-',
         promoLink: item.promoLink || item.promo_link || '',
         ownerLabel: item.createdByName || item.ownerLabel || '-',
@@ -153,6 +196,41 @@ export default {
         this.$message.success('SubId 已加入当前列表')
         this.fetchCustomers()
       })
+    },
+    async openAssignDialog(row) {
+      const response = await getAssignableSubIdOwners()
+      this.assignableOwners = response.data || []
+      if (!this.assignableOwners.length) {
+        this.$message.warning('当前没有可分配的下级账号')
+        return
+      }
+      this.assignForm = {
+        recordId: row.recordId,
+        subId: row.subId,
+        ownerUserId: null
+      }
+      this.assignOpen = true
+    },
+    ownerLabel(owner) {
+      const nickName = owner.nickName ? `${owner.nickName} / ` : ''
+      return `${nickName}${owner.userName}`
+    },
+    async submitAssignOwner() {
+      if (!this.assignForm.ownerUserId) {
+        this.$message.warning('请选择目标拥有者')
+        return
+      }
+      this.assigning = true
+      try {
+        await assignSubIdOwner(this.assignForm.recordId, {
+          ownerUserId: this.assignForm.ownerUserId
+        })
+        this.assignOpen = false
+        this.$message.success('SubId 拥有者分配成功')
+        await this.fetchCustomers()
+      } finally {
+        this.assigning = false
+      }
     },
     copyText(text) {
       if (navigator.clipboard) {
