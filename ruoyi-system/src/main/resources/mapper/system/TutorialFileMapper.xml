@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.TutorialFileMapper">
+    <resultMap id="TutorialFileResult" type="TutorialFile">
+        <id property="fileId" column="file_id" />
+        <result property="fileName" column="file_name" />
+        <result property="filePath" column="file_path" />
+        <result property="fileType" column="file_type" />
+        <result property="fileSize" column="file_size" />
+        <result property="createBy" column="create_by" />
+        <result property="createTime" column="create_time" />
+        <result property="updateBy" column="update_by" />
+        <result property="updateTime" column="update_time" />
+        <result property="remark" column="remark" />
+    </resultMap>
+
+    <sql id="selectTutorialFileVo">
+        select file_id, file_name, file_path, file_type, file_size, create_by, create_time, update_by, update_time, remark
+        from tutorial_file
+    </sql>
+
+    <select id="selectTutorialFileList" parameterType="TutorialFile" resultMap="TutorialFileResult">
+        <include refid="selectTutorialFileVo" />
+        <where>
+            <if test="fileName != null and fileName != ''">
+                and file_name like concat('%', #{fileName}, '%')
+            </if>
+        </where>
+        order by create_time desc, file_id desc
+    </select>
+
+    <select id="selectTutorialFileById" parameterType="Long" resultMap="TutorialFileResult">
+        <include refid="selectTutorialFileVo" />
+        where file_id = #{fileId}
+    </select>
+
+    <insert id="insertTutorialFile" parameterType="TutorialFile" useGeneratedKeys="true" keyProperty="fileId">
+        insert into tutorial_file
+        (file_name, file_path, file_type, file_size, create_by, create_time, remark)
+        values
+        (#{fileName}, #{filePath}, #{fileType}, #{fileSize}, #{createBy}, #{createTime}, #{remark})
+    </insert>
+
+    <delete id="deleteTutorialFileById" parameterType="Long">
+        delete from tutorial_file where file_id = #{fileId}
+    </delete>
+</mapper>
