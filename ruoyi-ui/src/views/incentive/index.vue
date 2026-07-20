@@ -4,10 +4,8 @@
       <div class="hero">
         <div>
           <div class="hero-title">
-            <h1>Affiliate 推荐激励计划</h1>
-            <span>2026年度</span>
+            <h1>奖励明细</h1>
           </div>
-          <p>推荐优质合作伙伴加入平台，获得阶梯奖金激励。</p>
         </div>
       </div>
 
@@ -140,7 +138,7 @@ export default {
         {
           index: 4,
           title: '执行时间',
-          content: '该激励计划适用于 2026 年度内首次建立合作的引荐客户，若后续有政策更新，以平台最新公告为准。'
+          content: ''
         }
       ]
     }

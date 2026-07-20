@@ -1,5 +1,6 @@
 <template>
   <div class="login">
+    <div class="login-page-title">TK返点系统查询</div>
     <el-form ref="loginForm" :model="loginForm" :rules="loginRules" class="login-form">
       <h3 class="title">{{title}}</h3>
       <el-form-item prop="username">
@@ -152,34 +153,58 @@ export default {
 
 <style rel="stylesheet/scss" lang="scss" scoped>
 .login {
+  position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
   height: 100%;
-  background-image: url("../assets/images/login-background.jpg");
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 52% 88%, rgba(100, 48, 197, 0.42) 0, rgba(100, 48, 197, 0.2) 16%, rgba(100, 48, 197, 0) 34%),
+    linear-gradient(116deg, #020817 0%, #0b1745 34%, #073f4a 72%, #06101d 100%);
   background-size: cover;
 }
+.login-page-title,
 .title {
-  margin: 0px auto 30px auto;
+  background: linear-gradient(90deg, #1d73dc 0%, #13c7d8 47%, #7566f1 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.login-page-title {
+  position: absolute;
+  top: 32px;
+  left: 42px;
+  z-index: 2;
+  font-size: 34px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.title {
+  margin: 0px auto 32px auto;
   text-align: center;
-  color: #707070;
+  font-size: 24px;
+  font-weight: 800;
 }
 
 .login-form {
   border-radius: 6px;
   background: #ffffff;
   width: 400px;
-  padding: 25px 25px 5px 25px;
+  padding: 32px 28px 10px 28px;
   z-index: 1;
   .el-input {
-    height: 38px;
+    height: 44px;
     input {
-      height: 38px;
+      height: 44px;
+      font-size: 16px;
     }
   }
   .input-icon {
-    height: 39px;
-    width: 14px;
+    height: 45px;
+    width: 16px;
     margin-left: 2px;
   }
 }
@@ -190,7 +215,7 @@ export default {
 }
 .login-code {
   width: 33%;
-  height: 38px;
+  height: 44px;
   float: right;
   img {
     cursor: pointer;
@@ -206,10 +231,18 @@ export default {
   text-align: center;
   color: #fff;
   font-family: Arial;
-  font-size: 12px;
+  font-size: 14px;
   letter-spacing: 1px;
+  z-index: 1;
 }
 .login-code-img {
-  height: 38px;
+  height: 44px;
+}
+::v-deep .el-checkbox__label {
+  font-size: 15px;
+}
+::v-deep .el-button {
+  font-size: 16px;
+  font-weight: 700;
 }
 </style>
