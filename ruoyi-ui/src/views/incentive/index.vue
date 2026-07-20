@@ -55,7 +55,7 @@
         </el-table>
       </section>
 
-      <section class="section">
+      <!-- <section class="section">
         <div class="section-heading">
           <i></i>
           <h2>奖励阶梯</h2>
@@ -95,7 +95,7 @@
             </div>
           </div>
         </div>
-      </section>
+      </section> -->
     </el-card>
   </div>
 </template>

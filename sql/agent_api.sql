@@ -105,10 +105,10 @@ insert ignore into sys_menu values
 (2002, '下级数据', 2000, 2, 'downline', 'agent/downline/index', '', '', 1, 0, 'C', '0', '0', 'agent:downline:list', 'dashboard', 'admin', sysdate(), '', null, '代理消耗数据'),
 (2003, 'SubId管理', 2000, 3, 'subid', 'agent/subid/index', '', '', 1, 0, 'C', '0', '0', 'agent:subid:list', 'dict', 'admin', sysdate(), '', null, 'SubId管理'),
 (2004, '广告户管理', 2000, 4, 'ad-account', 'agent/ad-account/index', '', '', 1, 0, 'C', '0', '0', 'agent:adaccount:list', 'build', 'admin', sysdate(), '', null, '广告户管理'),
-(2005, '激励计划', 0, 2, 'incentive', 'incentive/index', '', '', 1, 0, 'C', '1', '0', 'incentive:plan:list', 'money', 'admin', sysdate(), '', null, '激励计划');
+(2005, '奖励明细', 0, 2, 'incentive', 'incentive/index', '', '', 1, 0, 'C', '1', '0', 'incentive:plan:list', 'money', 'admin', sysdate(), '', null, '奖励明细');
 
--- 已初始化的环境同步隐藏激励计划菜单。
-update sys_menu set visible = '1' where menu_id = 2005;
+-- 已初始化的环境同步隐藏奖励明细菜单，并更新菜单文案。
+update sys_menu set menu_name = '奖励明细', visible = '1', remark = '奖励明细' where menu_id = 2005;
 
 insert ignore into sys_role_menu(role_id, menu_id)
 select r.role_id, m.menu_id
