@@ -4,9 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import com.alibaba.fastjson2.JSONArray;
@@ -26,6 +30,22 @@ class PartnerStackControllerTest
         assertTrue(PartnerStackController.matchesAdAccountId(customer, "ak7AZ1"));
         assertTrue(PartnerStackController.matchesAdAccountId(customer, "ADVERTISER"));
         assertFalse(PartnerStackController.matchesAdAccountId(customer, "missing"));
+    }
+
+    @Test
+    void sumsEffectiveSpendFromTransactionsInsteadOfMissingCustomerAmountFields()
+    {
+        JSONArray transactions = JSONArray.of(
+                transaction("cus_RZ3srbPLldtwQT", 279),
+                transaction("cus_RZ3srbPLldtwQT", 394),
+                transaction("cus_RZ3srbPLldtwQT", 12),
+                transaction("cus_other", 36980));
+
+        assertEquals(new BigDecimal("6.85"),
+                PartnerStackController.sumTransactionAmountsByCustomer(transactions)
+                        .get("cus_RZ3srbPLldtwQT"));
+        assertEquals(new BigDecimal("369.80"),
+                PartnerStackController.sumTransactionAmountsByCustomer(transactions).get("cus_other"));
     }
 
     @Test
@@ -102,5 +122,44 @@ class PartnerStackControllerTest
 
         assertEquals(1, rows.size());
         assertEquals("manhuang1", rows.get(0).getString("subId"));
+    }
+
+    @Test
+    void loadsIndependentDashboardSourcesInParallel()
+    {
+        CountDownLatch started = new CountDownLatch(3);
+        Supplier<Integer> first = concurrentSource(started, 1);
+        Supplier<Integer> second = concurrentSource(started, 2);
+        Supplier<Integer> third = concurrentSource(started, 3);
+
+        assertEquals(List.of(1, 2, 3), PartnerStackController.runInParallel(List.of(first, second, third)));
+    }
+
+    private Supplier<Integer> concurrentSource(CountDownLatch started, int result)
+    {
+        return () ->
+        {
+            started.countDown();
+            try
+            {
+                if (!started.await(2, TimeUnit.SECONDS))
+                {
+                    throw new IllegalStateException("dashboard sources were executed sequentially");
+                }
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+            return result;
+        };
+    }
+
+    private JSONObject transaction(String customerKey, int amountUsd)
+    {
+        return JSONObject.of(
+                "customer", JSONObject.of("key", customerKey),
+                "amount_usd", amountUsd);
     }
 }

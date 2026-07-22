@@ -37,24 +37,27 @@
 
     <el-card shadow="never" class="table-card">
       <el-table :data="accountList" border v-loading="loading">
-        <el-table-column prop="contact" label="联系人" min-width="220">
+        <el-table-column prop="accountId" label="广告户ID" min-width="220">
           <template slot-scope="scope">
-            <el-button type="text" class="account-link" @click="openTransactionDialog(scope.row)">{{ scope.row.contact }}</el-button>
+            <el-button type="text" class="account-link" @click="openTransactionDialog(scope.row)">{{ scope.row.accountId }}</el-button>
           </template>
         </el-table-column>
-        <el-table-column prop="statusLabel" label="状态" min-width="110" align="center">
+        <el-table-column prop="subId" label="SubId" min-width="150" align="center" />
+        <el-table-column prop="countryIso" label="国家代码" min-width="130" align="center" />
+        <el-table-column prop="statusLabel" label="状态" min-width="120" align="center">
           <template slot-scope="scope">
-            <span class="status-dot" :class="scope.row.statusClass"></span>
-            <span>{{ scope.row.statusLabel }}</span>
+            <el-tag :type="scope.row.status === 'paid' ? 'success' : ''" effect="plain" size="small">
+              {{ scope.row.statusLabel }}
+            </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="sourceType" label="来源" min-width="140" align="center" />
-        <el-table-column prop="revenue" label="收入" min-width="140" align="center">
+        <el-table-column prop="amountSUM" label="有效消耗" min-width="150" align="center">
           <template slot-scope="scope">
-            <span>${{ scope.row.revenue }} USD</span>
+            <span>${{ scope.row.amountSUM }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="createdDate" label="日期已创建" min-width="140" align="center" />
+        <el-table-column prop="updatedAt" label="更新时间" min-width="180" align="center" />
+        <el-table-column prop="createdAt" label="创建时间" min-width="180" align="center" />
       </el-table>
       <el-pagination
         class="table-pagination"
@@ -102,14 +105,23 @@
 <script>
 import { getPartnerStackAdAccounts, getPartnerStackTransactionDetails } from '@/api/partnerstack'
 
-const defaultRange = ['2026-06-17 15:03:13', '2026-07-17 15:03:13']
+const formatDateTime = date => {
+  const pad = value => `${value}`.padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+const buildDefaultRange = () => {
+  const end = new Date()
+  const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000)
+  return [formatDateTime(start), formatDateTime(end)]
+}
 
 export default {
   name: 'AdAccountManage',
   data() {
     return {
       filters: {
-        dateRange: defaultRange,
+        dateRange: buildDefaultRange(),
         accountId: '',
         subId: '',
         status: '',
@@ -118,8 +130,8 @@ export default {
       loading: false,
       subIdOptions: [],
       statusOptions: [
-        { label: '已注册', value: 'registered' },
-        { label: '已付费', value: 'paid' }
+        { label: '注册', value: 'registered' },
+        { label: '付费', value: 'paid' }
       ],
       accountList: [],
       pagination: {
@@ -164,14 +176,15 @@ export default {
           const status = this.normalizeStatus(item.hasPaid)
           return {
             customerKey: item.customerKey || '-',
+            accountId: item.contact || item.customerKey || '-',
             contact: item.contact || item.customerKey || '-',
             subId: item.subId || '-',
+            countryIso: item.countryIso || '-',
             status,
             statusLabel: this.toStatusLabel(status),
-            statusClass: this.toStatusClass(status),
-            sourceType: item.sourceType || '-',
-            revenue: Number(item.totalRevenue || 0).toFixed(2),
-            createdDate: item.createdDate || this.formatDate(item.createdAt)
+            amountSUM: Number(item.amountSUM || 0).toFixed(2),
+            updatedAt: this.formatTime(item.updatedAt),
+            createdAt: this.formatTime(item.createdAt)
           }
         })
         this.subIdOptions = [...new Set(this.accountList.map(item => item.subId).filter(item => item && item !== '-'))]
@@ -201,15 +214,9 @@ export default {
     },
     toStatusLabel(status) {
       return {
-        registered: '已注册',
-        paid: '已付费'
-      }[status] || '已注册'
-    },
-    toStatusClass(status) {
-      return {
-        registered: 'signed-up',
-        paid: 'paid'
-      }[status] || 'signed-up'
+        registered: '注册',
+        paid: '付费'
+      }[status] || '注册'
     },
     formatTime(value) {
       if (!value) {
@@ -238,7 +245,7 @@ export default {
     },
     handleReset() {
       this.filters = {
-        dateRange: defaultRange,
+        dateRange: buildDefaultRange(),
         accountId: '',
         subId: '',
         status: '',

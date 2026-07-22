@@ -19,6 +19,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -50,6 +55,12 @@ public class PartnerStackController extends BaseController
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
+    private static final ExecutorService DASHBOARD_EXECUTOR = Executors.newFixedThreadPool(3, runnable ->
+    {
+        Thread thread = new Thread(runnable, "partnerstack-dashboard");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     @Value("${partnerstack.base-url:https://api.partnerstack.com/api/v2}")
     private String baseUrl;
@@ -106,22 +117,25 @@ public class PartnerStackController extends BaseController
             Set<String> selectedCustomerKeys = StringUtils.hasText(subId)
                     ? matchingCustomerKeys(customerSource, scope, subId, access.fallbackSubId())
                     : Set.of();
-            JSONArray actionSource;
-            JSONArray transactionSource;
-            JSONArray rewardSource;
+            List<JSONArray> eventSources;
             if (StringUtils.hasText(subId))
             {
-                actionSource = fetchAllItemsForCustomers("/actions", eventParams, access.token(), selectedCustomerKeys);
-                transactionSource = fetchAllItemsForCustomers("/transactions", eventParams, access.token(), selectedCustomerKeys);
-                rewardSource = fetchAllItemsForCustomers("/rewards", eventParams, access.token(), selectedCustomerKeys);
+                eventSources = runInParallel(List.of(
+                        () -> fetchAllItemsForCustomers("/actions", eventParams, access.token(), selectedCustomerKeys),
+                        () -> fetchAllItemsForCustomers("/transactions", eventParams, access.token(), selectedCustomerKeys),
+                        () -> fetchAllItemsForCustomers("/rewards", eventParams, access.token(), selectedCustomerKeys)));
             }
             else
             {
                 putIfPresent(eventParams, "customer_key", scope.queryCustomerKey());
-                actionSource = fetchAllItems("/actions", eventParams, access.token());
-                transactionSource = fetchAllItems("/transactions", eventParams, access.token());
-                rewardSource = fetchAllItems("/rewards", eventParams, access.token());
+                eventSources = runInParallel(List.of(
+                        () -> fetchAllItems("/actions", eventParams, access.token()),
+                        () -> fetchAllItems("/transactions", eventParams, access.token()),
+                        () -> fetchAllItems("/rewards", eventParams, access.token())));
             }
+            JSONArray actionSource = eventSources.get(0);
+            JSONArray transactionSource = eventSources.get(1);
+            JSONArray rewardSource = eventSources.get(2);
             JSONArray actions = filterItems(actionSource, scope, subId, minCreated, maxCreated,
                     access.fallbackSubId());
             JSONArray transactions = filterItems(transactionSource, scope, subId, minCreated, maxCreated,
@@ -322,6 +336,10 @@ public class PartnerStackController extends BaseController
             }
             JSONArray customers = filterItems(customerSource, scope, subId, minCreated, maxCreated,
                     access.fallbackSubId());
+            JSONArray transactions = filterItems(fetchAllItems("/transactions",
+                    buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null), access.token()),
+                    scope, subId, minCreated, maxCreated, access.fallbackSubId());
+            Map<String, BigDecimal> transactionAmounts = sumTransactionAmountsByCustomer(transactions);
             List<JSONObject> rows = new ArrayList<>();
             for (Object item : customers)
             {
@@ -341,7 +359,7 @@ public class PartnerStackController extends BaseController
                     continue;
                 }
                 String currentCustomerKey = customer.getString("key");
-                BigDecimal amountSum = decimalFromCents(customer.getBigDecimal("amount_sum"));
+                BigDecimal amountSum = transactionAmounts.getOrDefault(currentCustomerKey, BigDecimal.ZERO);
                 if (amountSum.compareTo(minAmountSUM == null ? BigDecimal.ZERO : minAmountSUM) < 0)
                 {
                     continue;
@@ -354,11 +372,11 @@ public class PartnerStackController extends BaseController
                 row.put("countryIso", extractCountry(customer));
                 row.put("hasPaid", hasPaid ? 1 : 0);
                 row.put("sourceType", "推荐链接");
-                row.put("totalRevenue", decimalFromCents(customer.getBigDecimal("total_revenue")));
+                row.put("totalRevenue", money(amountSum));
                 row.put("createdDate", formatDateOnly(customer.getLong("created_at")));
                 row.put("updatedAt", formatIsoDateTime(customer.getLong("updated_at")));
                 row.put("createdAt", formatIsoDateTime(customer.getLong("created_at")));
-                row.put("amountSUM", amountSum.setScale(2, RoundingMode.HALF_UP));
+                row.put("amountSUM", money(amountSum));
                 rows.add(row);
             }
             rows.sort(Comparator.comparing((JSONObject row) -> row.getString("updatedAt"),
@@ -680,6 +698,27 @@ public class PartnerStackController extends BaseController
         return result;
     }
 
+    static <T> List<T> runInParallel(List<Supplier<T>> suppliers)
+    {
+        List<CompletableFuture<T>> futures = suppliers.stream()
+                .map(supplier -> CompletableFuture.supplyAsync(supplier, DASHBOARD_EXECUTOR))
+                .toList();
+        try
+        {
+            return futures.stream().map(CompletableFuture::join).toList();
+        }
+        catch (CompletionException e)
+        {
+            futures.forEach(future -> future.cancel(true));
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtimeException)
+            {
+                throw runtimeException;
+            }
+            throw new IllegalStateException(cause);
+        }
+    }
+
     private JSONObject requestPartnerStack(String path, Map<String, Object> params, String accessToken)
     {
         String query = buildQuery(params);
@@ -889,6 +928,28 @@ public class PartnerStackController extends BaseController
         return containsTextIgnoreCase(customer.getString("key"), query)
                 || containsTextIgnoreCase(customer.getString("customer_key"), query)
                 || containsTextIgnoreCase(customer.getString("shared_id"), query);
+    }
+
+    static Map<String, BigDecimal> sumTransactionAmountsByCustomer(JSONArray transactions)
+    {
+        Map<String, BigDecimal> amounts = new LinkedHashMap<>();
+        for (Object item : transactions)
+        {
+            if (!(item instanceof JSONObject transaction))
+            {
+                continue;
+            }
+            String customerKey = extractCustomerKey(transaction);
+            if (!StringUtils.hasText(customerKey))
+            {
+                continue;
+            }
+            BigDecimal amount = cents(transaction.containsKey("amount_usd")
+                    ? transaction.get("amount_usd") : transaction.get("amount"));
+            amounts.merge(customerKey, amount, BigDecimal::add);
+        }
+        amounts.replaceAll((key, value) -> money(value));
+        return amounts;
     }
 
     static <T> List<T> pageRows(List<T> rows, int pageNum, int pageSize)
@@ -1242,7 +1303,7 @@ public class PartnerStackController extends BaseController
         return subIds == null || subIds.isEmpty() ? null : subIds.getString(0);
     }
 
-    private BigDecimal cents(Object value)
+    private static BigDecimal cents(Object value)
     {
         if (value == null)
         {
@@ -1258,7 +1319,7 @@ public class PartnerStackController extends BaseController
         }
     }
 
-    private BigDecimal money(BigDecimal value)
+    private static BigDecimal money(BigDecimal value)
     {
         return value.setScale(2, RoundingMode.HALF_UP);
     }
