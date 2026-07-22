@@ -54,6 +54,7 @@ public class PartnerStackController extends BaseController
     private static final int REQUEST_TIMEOUT_SECONDS = 12;
     private static final int MAX_REQUEST_ATTEMPTS = 2;
     private static final long RESPONSE_CACHE_TTL_MILLIS = 30_000L;
+    private static final List<String> DASHBOARD_SOURCES = List.of("customers", "actions", "transactions", "rewards");
     private static final Map<RequestCacheKey, CachedPartnerResponse> RESPONSE_CACHE = new ConcurrentHashMap<>();
     private static final Map<RequestCacheKey, CompletableFuture<String>> IN_FLIGHT_REQUESTS = new ConcurrentHashMap<>();
 
@@ -89,11 +90,22 @@ public class PartnerStackController extends BaseController
     public AjaxResult dashboard(@RequestParam(required = false) Long minCreated,
             @RequestParam(required = false) Long maxCreated,
             @RequestParam(required = false) String subId,
-            @RequestParam(required = false) String transactionId)
+            @RequestParam(required = false) String transactionId,
+            @RequestParam(required = false) String source)
     {
         if (minCreated != null && maxCreated != null && minCreated > maxCreated)
         {
             return error("开始时间不能晚于结束时间");
+        }
+
+        List<String> requestedSources;
+        try
+        {
+            requestedSources = dashboardSources(source);
+        }
+        catch (IllegalArgumentException e)
+        {
+            return error(e.getMessage());
         }
 
         PartnerAccess access = scopedPartnerAccess();
@@ -101,46 +113,49 @@ public class PartnerStackController extends BaseController
         {
             Scope scope = access.scope();
             Map<String, Object> customerParams = new LinkedHashMap<>();
-            JSONArray customerSource;
-            if (scope.requiresCustomerResolution() || StringUtils.hasText(subId))
+            JSONArray customerSource = new JSONArray();
+            boolean loadCustomers = requestedSources.contains("customers");
+            if (loadCustomers || scope.requiresCustomerResolution() || StringUtils.hasText(subId))
             {
+                if (!scope.requiresCustomerResolution() && !StringUtils.hasText(subId))
+                {
+                    customerParams = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
+                }
                 customerSource = fetchAllItems("/customers", customerParams, access.token());
                 if (scope.requiresCustomerResolution())
                 {
                     scope = resolveScope(scope, customerSource);
                 }
             }
-            else
-            {
-                customerParams = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
-                customerSource = fetchAllItems("/customers", customerParams, access.token());
-            }
 
-            JSONArray customers = filterItems(customerSource, scope, subId, minCreated, maxCreated,
-                    access.fallbackSubId());
+            JSONArray customers = loadCustomers
+                    ? filterItems(customerSource, scope, subId, minCreated, maxCreated, access.fallbackSubId())
+                    : new JSONArray();
             Map<String, Object> eventParams = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
             Set<String> selectedCustomerKeys = StringUtils.hasText(subId)
                     ? matchingCustomerKeys(customerSource, scope, subId, access.fallbackSubId())
                     : Set.of();
-            List<JSONArray> eventSources;
-            if (StringUtils.hasText(subId))
+            putIfPresent(eventParams, "customer_key", scope.queryCustomerKey());
+            JSONArray actionSource = new JSONArray();
+            JSONArray transactionSource = new JSONArray();
+            JSONArray rewardSource = new JSONArray();
+            for (String requestedSource : requestedSources)
             {
-                eventSources = runInParallel(List.of(
-                        () -> fetchAllItemsForCustomers("/actions", eventParams, access.token(), selectedCustomerKeys),
-                        () -> fetchAllItemsForCustomers("/transactions", eventParams, access.token(), selectedCustomerKeys),
-                        () -> fetchAllItemsForCustomers("/rewards", eventParams, access.token(), selectedCustomerKeys)));
+                if ("customers".equals(requestedSource))
+                {
+                    continue;
+                }
+                JSONArray items = StringUtils.hasText(subId)
+                        ? fetchAllItemsForCustomers("/" + requestedSource, eventParams, access.token(), selectedCustomerKeys)
+                        : fetchAllItems("/" + requestedSource, eventParams, access.token());
+                switch (requestedSource)
+                {
+                    case "actions" -> actionSource = items;
+                    case "transactions" -> transactionSource = items;
+                    case "rewards" -> rewardSource = items;
+                    default -> throw new IllegalArgumentException("不支持的首页数据源");
+                }
             }
-            else
-            {
-                putIfPresent(eventParams, "customer_key", scope.queryCustomerKey());
-                eventSources = runInParallel(List.of(
-                        () -> fetchAllItems("/actions", eventParams, access.token()),
-                        () -> fetchAllItems("/transactions", eventParams, access.token()),
-                        () -> fetchAllItems("/rewards", eventParams, access.token())));
-            }
-            JSONArray actionSource = eventSources.get(0);
-            JSONArray transactionSource = eventSources.get(1);
-            JSONArray rewardSource = eventSources.get(2);
             JSONArray actions = filterItems(actionSource, scope, subId, minCreated, maxCreated,
                     access.fallbackSubId());
             JSONArray transactions = filterItems(transactionSource, scope, subId, minCreated, maxCreated,
@@ -157,14 +172,30 @@ public class PartnerStackController extends BaseController
                         ? null : ((JSONObject) item).getJSONObject("source").getString("key"), transactionId));
             }
 
-            return success(buildDashboard(access.displayKey(), access.fallbackSubId(), access.visibleSubIds(), subId,
-                    customers, actions, transactions, rewards));
+            JSONObject result = buildDashboard(access.displayKey(), access.fallbackSubId(), access.visibleSubIds(), subId,
+                    customers, actions, transactions, rewards);
+            result.put("loadedSources", requestedSources);
+            return success(result);
         }
         catch (PartnerStackApiException e)
         {
             logger.error("PartnerStack dashboard request failed: {}", e.getMessage());
             return AjaxResult.error(e.getStatus(), e.getMessage());
         }
+    }
+
+    static List<String> dashboardSources(String source)
+    {
+        if (!StringUtils.hasText(source))
+        {
+            return DASHBOARD_SOURCES;
+        }
+        String normalized = source.trim().toLowerCase();
+        if (!DASHBOARD_SOURCES.contains(normalized))
+        {
+            throw new IllegalArgumentException("不支持的首页数据源: " + source);
+        }
+        return List.of(normalized);
     }
 
     @GetMapping("/customers")

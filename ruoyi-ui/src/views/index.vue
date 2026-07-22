@@ -1,6 +1,6 @@
 <template>
   <div class="dashboard-page">
-    <section class="filter-panel" v-loading="loading">
+    <section class="filter-panel">
       <el-form :inline="true" :model="filters" class="dashboard-form">
         <el-form-item label="日期范围">
           <el-date-picker
@@ -21,12 +21,12 @@
           <el-input v-model="filters.transactionId" placeholder="模糊搜索" clearable />
         </el-form-item>
         <el-form-item class="query-item">
-          <el-button type="primary" icon="el-icon-search" @click="handleSearch">查询</el-button>
+          <el-button type="primary" icon="el-icon-search" :loading="loading" @click="handleSearch">查询</el-button>
         </el-form-item>
       </el-form>
     </section>
 
-    <section class="metric-grid" v-loading="loading">
+    <section class="metric-grid">
       <article v-for="card in metricCards" :key="card.key" class="metric-card">
         <span class="metric-icon" :class="card.tone"><i :class="card.icon" /></span>
         <span class="metric-copy">
@@ -53,12 +53,12 @@
     <section class="detail-panel">
       <header class="detail-header">
         <strong>明细数据</strong>
-        <span>共 {{ tableData.length }} 条</span>
+        <span v-if="loadingStage" class="loading-stage"><i class="el-icon-loading" /> {{ loadingStage }}</span>
+        <span v-else>共 {{ tableData.length }} 条</span>
       </header>
       <div class="table-wrap">
         <el-table
           :data="tableData"
-          v-loading="loading"
           empty-text="暂无数据"
           border
         >
@@ -116,12 +116,27 @@ const emptySummary = () => ({
   transactionAmount: 0,
   rewardAmount: 0
 })
+const dashboardStages = [
+  { source: 'customers', label: '正在加载广告户...' },
+  { source: 'actions', label: '正在加载动作数据...' },
+  { source: 'transactions', label: '正在加载消耗数据...' },
+  { source: 'rewards', label: '正在加载奖励数据...' }
+]
+const sourceFields = {
+  customers: ['customers', 'paidCustomers'],
+  actions: ['signups', 'paidSignups', 'actions', 'validActions'],
+  transactions: ['transactions', 'transactionAmount'],
+  rewards: ['rewards', 'rewardAmount']
+}
 
 export default {
   name: 'Index',
   data() {
     return {
       loading: false,
+      loadingStage: '',
+      dashboardRequestId: 0,
+      dashboardNeedsRefresh: false,
       partnerStackKey: '',
       filters: { dateRange: createDefaultRange(), subId: '', transactionId: '' },
       subIdOptions: [],
@@ -144,6 +159,21 @@ export default {
   },
   created() {
     this.initializeDashboard()
+  },
+  beforeDestroy() {
+    this.dashboardRequestId += 1
+  },
+  activated() {
+    if (this.dashboardNeedsRefresh && this.partnerStackKey) {
+      this.dashboardNeedsRefresh = false
+      this.fetchDashboard()
+    }
+  },
+  deactivated() {
+    this.dashboardNeedsRefresh = this.dashboardNeedsRefresh || this.loading
+    this.dashboardRequestId += 1
+    this.loading = false
+    this.loadingStage = ''
   },
   methods: {
     async initializeDashboard() {
@@ -178,25 +208,55 @@ export default {
       }).catch(() => {})
     },
     async fetchDashboard() {
+      const requestId = ++this.dashboardRequestId
       this.loading = true
+      this.loadingStage = ''
+      this.summary = emptySummary()
+      this.tableData = []
+      const rowMap = new Map()
       try {
         const [start, end] = this.filters.dateRange || []
-        const response = await getPartnerStackDashboard({
+        const params = {
           minCreated: start ? new Date(start).getTime() : undefined,
           maxCreated: end ? new Date(end).getTime() : undefined,
           subId: this.filters.subId || undefined,
           transactionId: this.filters.transactionId || undefined
-        })
-        const data = response.data || {}
-        this.partnerStackKey = data.partnerStackKey || this.partnerStackKey
-        this.summary = { ...emptySummary(), ...(data.summary || {}) }
-        this.tableData = data.rows || []
-        this.subIdOptions = this.filters.subId
-          ? [...new Set([...this.subIdOptions, ...(data.subIds || [])])]
-          : (data.subIds || [])
+        }
+        for (const stage of dashboardStages) {
+          if (requestId !== this.dashboardRequestId || this._isDestroyed) return
+          this.loadingStage = stage.label
+          const response = await getPartnerStackDashboard({ ...params, source: stage.source })
+          if (requestId !== this.dashboardRequestId || this._isDestroyed) return
+          this.mergeDashboardSource(response.data || {}, stage.source, rowMap)
+          await this.$nextTick()
+        }
       } finally {
-        this.loading = false
+        if (requestId === this.dashboardRequestId) {
+          this.loading = false
+          this.loadingStage = ''
+        }
       }
+    },
+    mergeDashboardSource(data, source, rowMap) {
+      this.partnerStackKey = data.partnerStackKey || this.partnerStackKey
+      const nextSummary = { ...this.summary }
+      for (const field of sourceFields[source] || []) {
+        nextSummary[field] = (data.summary || {})[field] || 0
+      }
+      this.summary = nextSummary
+
+      for (const sourceRow of data.rows || []) {
+        const subId = sourceRow.subId || '-'
+        const row = rowMap.get(subId) || { subId, ...emptySummary() }
+        for (const field of sourceFields[source] || []) {
+          row[field] = sourceRow[field] || 0
+        }
+        rowMap.set(subId, row)
+      }
+      this.tableData = Array.from(rowMap.values())
+
+      const subIds = [...new Set([...this.subIdOptions, ...(data.subIds || [])])]
+      this.subIdOptions = subIds
     },
     handleSearch() {
       this.fetchDashboard()
@@ -370,6 +430,7 @@ export default {
 
 .detail-header strong { font-size: 15px; }
 .detail-header span { color: #8b9bb0; font-size: 12px; }
+.loading-stage i { margin-right: 4px; }
 .table-wrap { padding: 15px 20px 20px; overflow-x: auto; }
 .table-wrap ::v-deep .el-table { min-width: 1160px; color: #5f6a7c; }
 .table-wrap ::v-deep th.el-table__cell { background: #f7f9fb; color: #657083; font-weight: 600; }

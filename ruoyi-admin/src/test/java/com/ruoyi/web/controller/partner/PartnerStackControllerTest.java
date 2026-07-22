@@ -2,6 +2,7 @@ package com.ruoyi.web.controller.partner;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
@@ -22,6 +23,16 @@ import com.sun.net.httpserver.HttpServer;
 
 class PartnerStackControllerTest
 {
+    @Test
+    void selectsDashboardSourcesForProgressiveLoading()
+    {
+        assertEquals(List.of("customers", "actions", "transactions", "rewards"),
+                PartnerStackController.dashboardSources(null));
+        assertEquals(List.of("actions"), PartnerStackController.dashboardSources(" Actions "));
+        assertThrows(IllegalArgumentException.class,
+                () -> PartnerStackController.dashboardSources("unknown"));
+    }
+
     @Test
     void cachesSuccessfulPartnerStackResponsesAndReturnsIndependentCopies() throws Exception
     {
