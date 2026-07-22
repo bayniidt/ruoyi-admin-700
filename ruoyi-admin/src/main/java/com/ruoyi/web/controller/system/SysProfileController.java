@@ -68,6 +68,15 @@ public class SysProfileController extends BaseController
         currentUser.setEmail(user.getEmail());
         currentUser.setPhonenumber(user.getPhonenumber());
         currentUser.setSex(user.getSex());
+        if (user.getPartnerStackKey() != null)
+        {
+            String partnerStackKey = StringUtils.trim(user.getPartnerStackKey());
+            if (partnerStackKey.length() > 100)
+            {
+                return error("PartnerStack Key长度不能超过100个字符");
+            }
+            currentUser.setPartnerStackKey(partnerStackKey);
+        }
         if (StringUtils.isNotEmpty(user.getPhonenumber()) && !userService.checkPhoneUnique(currentUser))
         {
             return error("修改用户'" + loginUser.getUsername() + "'失败，手机号码已存在");
@@ -83,6 +92,34 @@ public class SysProfileController extends BaseController
             return success();
         }
         return error("修改个人信息异常，请联系管理员");
+    }
+
+    /**
+     * 绑定 PartnerStack Key
+     */
+    @Log(title = "绑定 PartnerStack Key", businessType = BusinessType.UPDATE)
+    @PutMapping("/partnerStackKey")
+    public AjaxResult updatePartnerStackKey(@RequestBody Map<String, String> params)
+    {
+        String partnerStackKey = StringUtils.trim(params.get("partnerStackKey"));
+        if (StringUtils.isEmpty(partnerStackKey))
+        {
+            return error("PartnerStack Key不能为空");
+        }
+        if (partnerStackKey.length() > 100)
+        {
+            return error("PartnerStack Key长度不能超过100个字符");
+        }
+        LoginUser loginUser = getLoginUser();
+        SysUser currentUser = loginUser.getUser();
+        currentUser.setPartnerStackKey(partnerStackKey);
+        currentUser.setUpdateBy(loginUser.getUsername());
+        if (userService.updateUserProfile(currentUser) > 0)
+        {
+            tokenService.setLoginUser(loginUser);
+            return success();
+        }
+        return error("绑定 PartnerStack Key失败，请联系管理员");
     }
 
     /**

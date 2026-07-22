@@ -110,6 +110,9 @@ insert ignore into sys_menu values
 -- 已初始化的环境同步显示奖励明细菜单，并更新菜单文案。
 update sys_menu set menu_name = '奖励明细', visible = '0', remark = '奖励明细' where menu_id = 2005;
 
+-- 客户后台只展示业务菜单，保留系统路由但不在侧边栏显示。
+update sys_menu set visible = '1' where menu_id in (1, 2, 3, 4);
+
 insert ignore into sys_role_menu(role_id, menu_id)
 select r.role_id, m.menu_id
 from sys_role r

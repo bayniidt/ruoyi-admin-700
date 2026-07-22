@@ -21,6 +21,7 @@ import java.util.Set;
 import java.util.StringJoiner;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Supplier;
@@ -48,9 +49,13 @@ import com.ruoyi.system.service.ISysUserService;
 @RequestMapping("/partnerstack")
 public class PartnerStackController extends BaseController
 {
-    private static final String FIXED_PARTNERSTACK_KEY = "fay2dGIxZKSls3K5USkVs0eGZ7N10mkuMytLrMbzDObrFglXoZenMfw8TqAGdryt";
     private static final int PARTNERSTACK_PAGE_SIZE = 250;
     private static final int MAX_PAGES = 100;
+    private static final int REQUEST_TIMEOUT_SECONDS = 12;
+    private static final int MAX_REQUEST_ATTEMPTS = 2;
+    private static final long RESPONSE_CACHE_TTL_MILLIS = 30_000L;
+    private static final Map<RequestCacheKey, CachedPartnerResponse> RESPONSE_CACHE = new ConcurrentHashMap<>();
+    private static final Map<RequestCacheKey, CompletableFuture<String>> IN_FLIGHT_REQUESTS = new ConcurrentHashMap<>();
 
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -424,33 +429,16 @@ public class PartnerStackController extends BaseController
 
         String query = buildQuery(params);
         String url = baseUrl + path + (query.isEmpty() ? "" : "?" + query);
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .timeout(Duration.ofSeconds(20))
-                .header("Authorization", "Bearer " + access.token())
-                .header("Accept", "application/json")
-                .GET()
-                .build();
         try
         {
-            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            JSONObject body = JSON.parseObject(response.body());
-            if (response.statusCode() >= 200 && response.statusCode() < 300)
-            {
-                filterByScope(body, access.scope());
-                return success(body);
-            }
-            return AjaxResult.error(502, body != null && body.containsKey("message") ? body.getString("message") : "PartnerStack 请求失败")
-                    .put("data", body);
+            JSONObject body = executePartnerStackRequest(url, access.token());
+            filterByScope(body, access.scope());
+            return success(body);
         }
-        catch (IOException | InterruptedException e)
+        catch (PartnerStackApiException e)
         {
-            if (e instanceof InterruptedException)
-            {
-                Thread.currentThread().interrupt();
-            }
-            logger.error("PartnerStack request failed: {}", url, e);
-            return error("PartnerStack 接口调用失败: " + e.getMessage());
+            logger.error("PartnerStack request failed: {}", e.getMessage());
+            return AjaxResult.error(e.getStatus(), e.getMessage());
         }
         catch (RuntimeException e)
         {
@@ -462,28 +450,41 @@ public class PartnerStackController extends BaseController
     private PartnerAccess scopedPartnerAccess()
     {
         SysUser user = userService.selectUserById(getUserId());
-        if (user == null)
+        if (user == null || !StringUtils.hasText(user.getPartnerStackKey()))
         {
-            throw new ServiceException("当前用户不存在");
+            throw new ServiceException("当前用户未绑定 PartnerStack Key，请先在个人中心完成绑定");
         }
-        String accessToken = StringUtils.hasText(FIXED_PARTNERSTACK_KEY)
-                ? FIXED_PARTNERSTACK_KEY : platformToken;
-        if (!StringUtils.hasText(accessToken))
+        String userKey = user.getPartnerStackKey().trim();
+        if (looksLikeAccessToken(userKey))
         {
-            throw new ServiceException("PartnerStack token 未配置");
+            return new PartnerAccess(userKey, Scope.all(), maskSecret(userKey), user.getUserName(),
+                    agentDataScopeService.selectSubIdsByUserIds(
+                            agentDataScopeService.selectSelfAndDescendantUserIds(user.getUserId())));
         }
+        if (!StringUtils.hasText(platformToken))
+        {
+            throw new ServiceException("当前账号绑定的是 PartnerStack 数据Key，但系统未配置 PARTNERSTACK_TOKEN");
+        }
+
         if (SecurityUtils.isAdmin())
         {
             Set<Long> visibleUserIds = new HashSet<>(agentDataScopeService.selectAllAgentUserIds());
             visibleUserIds.add(user.getUserId());
-            return new PartnerAccess(accessToken.trim(), Scope.all(), maskSecret(accessToken), user.getUserName(),
+            return new PartnerAccess(platformToken.trim(), Scope.all(), userKey, user.getUserName(),
                     agentDataScopeService.selectSubIdsByUserIds(visibleUserIds));
         }
         Set<Long> visibleUserIds = agentDataScopeService.selectSelfAndDescendantUserIds(user.getUserId());
-        Set<String> attributionKeys = agentDataScopeService.selectPartnerAttributionKeys(visibleUserIds);
-        return new PartnerAccess(accessToken.trim(), Scope.from(attributionKeys),
+        Set<String> attributionKeys = new HashSet<>(agentDataScopeService.selectPartnerAttributionKeys(visibleUserIds));
+        attributionKeys.add(userKey);
+        return new PartnerAccess(platformToken.trim(), Scope.from(attributionKeys),
                 String.join(",", attributionKeys), user.getUserName(),
                 agentDataScopeService.selectSubIdsByUserIds(visibleUserIds));
+    }
+
+    static boolean looksLikeAccessToken(String value)
+    {
+        return StringUtils.hasText(value) && value.length() >= 32
+                && !value.startsWith("part_") && !value.startsWith("cus_");
     }
 
     private String maskSecret(String value)
@@ -726,37 +727,55 @@ public class PartnerStackController extends BaseController
         return executePartnerStackRequest(url, accessToken);
     }
 
-    private JSONObject executePartnerStackRequest(String url, String accessToken)
+    JSONObject executePartnerStackRequest(String url, String accessToken)
     {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .timeout(Duration.ofSeconds(20))
-                .header("Authorization", "Bearer " + accessToken)
-                .header("Accept", "application/json")
-                .GET()
-                .build();
+        RequestCacheKey cacheKey = new RequestCacheKey(url, accessToken);
+        long now = System.currentTimeMillis();
+        CachedPartnerResponse cached = RESPONSE_CACHE.get(cacheKey);
+        if (cached != null && cached.expiresAt() > now)
+        {
+            return JSON.parseObject(cached.body());
+        }
+        if (cached != null)
+        {
+            RESPONSE_CACHE.remove(cacheKey, cached);
+        }
+
+        CompletableFuture<String> newRequest = new CompletableFuture<>();
+        CompletableFuture<String> request = IN_FLIGHT_REQUESTS.putIfAbsent(cacheKey, newRequest);
+        if (request == null)
+        {
+            request = newRequest;
+            try
+            {
+                String body = sendPartnerStackRequest(url, accessToken);
+                RESPONSE_CACHE.put(cacheKey,
+                        new CachedPartnerResponse(body, System.currentTimeMillis() + RESPONSE_CACHE_TTL_MILLIS));
+                newRequest.complete(body);
+                removeExpiredCacheEntries();
+            }
+            catch (RuntimeException e)
+            {
+                newRequest.completeExceptionally(e);
+            }
+            finally
+            {
+                IN_FLIGHT_REQUESTS.remove(cacheKey, newRequest);
+            }
+        }
+
         try
         {
-            HttpResponse<String> response = HTTP_CLIENT.send(request,
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            JSONObject body = JSON.parseObject(response.body());
-            if (response.statusCode() >= 200 && response.statusCode() < 300 && body != null)
+            return JSON.parseObject(request.join());
+        }
+        catch (CompletionException e)
+        {
+            Throwable cause = e.getCause();
+            if (cause instanceof PartnerStackApiException apiException)
             {
-                return body;
+                throw apiException;
             }
-            String message = body != null && StringUtils.hasText(body.getString("message"))
-                    ? body.getString("message") : "PartnerStack 请求失败";
-            throw new PartnerStackApiException(502,
-                    "PartnerStack 请求失败（HTTP " + response.statusCode() + "）: " + message);
-        }
-        catch (IOException e)
-        {
-            throw new PartnerStackApiException(502, "PartnerStack 接口调用失败: " + e.getMessage());
-        }
-        catch (InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-            throw new PartnerStackApiException(502, "PartnerStack 接口调用被中断");
+            throw new PartnerStackApiException(502, "PartnerStack 接口调用失败");
         }
         catch (RuntimeException e)
         {
@@ -766,6 +785,98 @@ public class PartnerStackController extends BaseController
             }
             throw new PartnerStackApiException(502, "PartnerStack 响应格式错误");
         }
+    }
+
+    private String sendPartnerStackRequest(String url, String accessToken)
+    {
+        PartnerStackApiException lastError = null;
+        for (int attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt++)
+        {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            long startedAt = System.nanoTime();
+            try
+            {
+                HttpResponse<String> response = HTTP_CLIENT.send(request,
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                long elapsedMillis = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
+                if (elapsedMillis >= 3_000)
+                {
+                    logger.warn("Slow PartnerStack response: path={}, status={}, elapsedMs={}, attempt={}",
+                            URI.create(url).getPath(), response.statusCode(), elapsedMillis, attempt);
+                }
+                if (response.statusCode() >= 200 && response.statusCode() < 300)
+                {
+                    JSONObject body = JSON.parseObject(response.body());
+                    if (body == null)
+                    {
+                        throw new PartnerStackApiException(502, "PartnerStack 响应格式错误");
+                    }
+                    return response.body();
+                }
+                JSONObject body = JSON.parseObject(response.body());
+                String message = body != null && StringUtils.hasText(body.getString("message"))
+                        ? body.getString("message") : "PartnerStack 请求失败";
+                lastError = new PartnerStackApiException(502,
+                        "PartnerStack 请求失败（HTTP " + response.statusCode() + "）: " + message);
+                if (!isTransientStatus(response.statusCode()) || attempt == MAX_REQUEST_ATTEMPTS)
+                {
+                    throw lastError;
+                }
+            }
+            catch (IOException e)
+            {
+                lastError = new PartnerStackApiException(502, "PartnerStack 接口调用失败: " + e.getMessage());
+                if (attempt == MAX_REQUEST_ATTEMPTS)
+                {
+                    throw lastError;
+                }
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                throw new PartnerStackApiException(502, "PartnerStack 接口调用被中断");
+            }
+            if (!sleepBeforeRetry(attempt))
+            {
+                throw new PartnerStackApiException(502, "PartnerStack 接口调用被中断");
+            }
+        }
+        throw lastError == null ? new PartnerStackApiException(502, "PartnerStack 接口调用失败") : lastError;
+    }
+
+    private boolean isTransientStatus(int status)
+    {
+        return status == 408 || status == 429 || status >= 500;
+    }
+
+    private boolean sleepBeforeRetry(int attempt)
+    {
+        try
+        {
+            Thread.sleep(250L * attempt);
+            return true;
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private void removeExpiredCacheEntries()
+    {
+        if (RESPONSE_CACHE.size() <= 500)
+        {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        RESPONSE_CACHE.entrySet().removeIf(entry -> entry.getValue().expiresAt() <= now);
     }
 
     private Scope resolveScope(Scope unresolved, JSONArray customers)
@@ -1376,6 +1487,14 @@ public class PartnerStackController extends BaseController
 
     private record PartnerAccess(String token, Scope scope, String displayKey, String fallbackSubId,
             Set<String> visibleSubIds)
+    {
+    }
+
+    private record RequestCacheKey(String url, String accessToken)
+    {
+    }
+
+    private record CachedPartnerResponse(String body, long expiresAt)
     {
     }
 

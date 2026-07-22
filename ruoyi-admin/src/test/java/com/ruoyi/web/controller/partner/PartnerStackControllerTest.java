@@ -5,19 +5,98 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.sun.net.httpserver.HttpServer;
 
 class PartnerStackControllerTest
 {
+    @Test
+    void cachesSuccessfulPartnerStackResponsesAndReturnsIndependentCopies() throws Exception
+    {
+        AtomicInteger upstreamRequests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/actions", exchange -> {
+            upstreamRequests.incrementAndGet();
+            byte[] body = "{\"data\":{\"items\":[{\"key\":\"act_1\"}]}}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try
+        {
+            PartnerStackController controller = new PartnerStackController(null, null);
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/actions?test=" + System.nanoTime();
+
+            JSONObject first = controller.executePartnerStackRequest(url, "test-token");
+            first.getJSONObject("data").getJSONArray("items").clear();
+            JSONObject second = controller.executePartnerStackRequest(url, "test-token");
+
+            assertEquals(1, upstreamRequests.get());
+            assertEquals(1, second.getJSONObject("data").getJSONArray("items").size());
+        }
+        finally
+        {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void retriesTransientPartnerStackFailures() throws Exception
+    {
+        AtomicInteger upstreamRequests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/transactions", exchange -> {
+            int requestNumber = upstreamRequests.incrementAndGet();
+            byte[] body = (requestNumber == 1
+                    ? "{\"message\":\"temporary upstream failure\"}"
+                    : "{\"data\":{\"items\":[]}}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(requestNumber == 1 ? 503 : 200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try
+        {
+            PartnerStackController controller = new PartnerStackController(null, null);
+            String url = "http://127.0.0.1:" + server.getAddress().getPort()
+                    + "/transactions?test=" + System.nanoTime();
+
+            JSONObject response = controller.executePartnerStackRequest(url, "test-token");
+
+            assertEquals(2, upstreamRequests.get());
+            assertTrue(response.getJSONObject("data").getJSONArray("items").isEmpty());
+        }
+        finally
+        {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void distinguishesApiTokensFromPartnerStackDataKeys()
+    {
+        assertTrue(PartnerStackController.looksLikeAccessToken(
+                "fay2dGIxZKSls3K5USkVs0eGZ7N10mkuMytLrMbzDObrFglXoZenMfw8TqAGdryt"));
+        assertFalse(PartnerStackController.looksLikeAccessToken("part_example"));
+        assertFalse(PartnerStackController.looksLikeAccessToken("cus_example"));
+        assertFalse(PartnerStackController.looksLikeAccessToken("short-key"));
+    }
+
     @Test
     void matchesAdvertiserIdAcrossPartnerStackCustomerFields()
     {

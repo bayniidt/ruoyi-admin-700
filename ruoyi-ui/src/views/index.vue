@@ -97,7 +97,7 @@
 
 <script>
 import { getPartnerStackDashboard } from '@/api/partnerstack'
-import { getUserProfile } from '@/api/system/user'
+import { getUserProfile, updatePartnerStackKey } from '@/api/system/user'
 
 const pad = value => `${value}`.padStart(2, '0')
 const formatDateTime = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
@@ -152,7 +152,30 @@ export default {
       if (key && key.trim()) {
         this.partnerStackKey = this.maskPartnerStackKey(key.trim())
         await this.fetchDashboard()
+        return
       }
+      this.promptPartnerStackKey()
+    },
+    promptPartnerStackKey() {
+      this.$prompt('PartnerStack Key 用于查询当前账号自己的 PartnerStack 数据，请先完成绑定。', '绑定 PartnerStack Key', {
+        confirmButtonText: '立即绑定',
+        cancelButtonText: '稍后绑定',
+        closeOnClickModal: false,
+        closeOnPressEscape: false,
+        inputPlaceholder: '请输入 PartnerStack API Token 或数据 Key',
+        inputValidator(value) {
+          const key = (value || '').trim()
+          if (!key) return 'PartnerStack Key不能为空'
+          if (key.length > 100) return 'PartnerStack Key长度不能超过100个字符'
+          return true
+        }
+      }).then(async ({ value }) => {
+        const key = value.trim()
+        await updatePartnerStackKey(key)
+        this.partnerStackKey = this.maskPartnerStackKey(key)
+        this.$modal.msgSuccess('PartnerStack Key绑定成功')
+        await this.fetchDashboard()
+      }).catch(() => {})
     },
     async fetchDashboard() {
       this.loading = true

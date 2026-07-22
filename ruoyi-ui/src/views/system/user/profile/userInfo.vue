@@ -9,6 +9,14 @@
     <el-form-item label="邮箱" prop="email">
       <el-input v-model="form.email" maxlength="50" />
     </el-form-item>
+    <el-form-item label="PartnerStack Key" prop="partnerStackKey">
+      <el-input
+        v-model.trim="form.partnerStackKey"
+        maxlength="100"
+        show-word-limit
+        placeholder="请输入 PartnerStack API Token 或数据 Key"
+      />
+    </el-form-item>
     <el-form-item label="性别">
       <el-radio-group v-model="form.sex">
         <el-radio label="0">男</el-radio>
@@ -55,6 +63,10 @@ export default {
             trigger: "blur"
           }
         ],
+        partnerStackKey: [
+          { required: true, message: "PartnerStack Key不能为空", trigger: "blur" },
+          { max: 100, message: "PartnerStack Key长度不能超过100个字符", trigger: "blur" }
+        ]
       }
     }
   },
@@ -66,7 +78,8 @@ export default {
             nickName: user.nickName,
             phonenumber: user.phonenumber,
             email: user.email,
-            sex: user.sex
+            sex: user.sex,
+            partnerStackKey: user.partnerStackKey || ""
           }
         }
       },
@@ -83,6 +96,7 @@ export default {
             this.user.email = this.form.email
             this.user.nickName = this.form.nickName
             this.user.sex = this.form.sex
+            this.user.partnerStackKey = this.form.partnerStackKey
           })
         }
       })

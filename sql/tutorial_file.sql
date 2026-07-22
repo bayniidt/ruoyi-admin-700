@@ -1,3 +1,5 @@
+set names utf8mb4;
+
 -- 广告账户注册及其他教学
 
 create table if not exists tutorial_file (
