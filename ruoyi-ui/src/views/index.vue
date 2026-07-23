@@ -222,13 +222,12 @@ export default {
           subId: this.filters.subId || undefined,
           transactionId: this.filters.transactionId || undefined
         }
+        this.loadingStage = '正在加载汇总数据...'
+        const response = await getPartnerStackDashboard(params)
+        if (requestId !== this.dashboardRequestId || this._isDestroyed) return
         for (const stage of dashboardStages) {
-          if (requestId !== this.dashboardRequestId || this._isDestroyed) return
           this.loadingStage = stage.label
-          const response = await getPartnerStackDashboard({ ...params, source: stage.source })
-          if (requestId !== this.dashboardRequestId || this._isDestroyed) return
           this.mergeDashboardSource(response.data || {}, stage.source, rowMap)
-          await this.$nextTick()
         }
       } finally {
         if (requestId === this.dashboardRequestId) {

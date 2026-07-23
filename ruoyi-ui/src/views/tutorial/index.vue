@@ -20,7 +20,6 @@
         <el-upload
           :show-file-list="false"
           :http-request="handleUpload"
-          :before-upload="beforeUpload"
           action="#"
         >
           <el-button type="primary" plain icon="el-icon-upload2" size="mini">新增文件</el-button>
@@ -111,14 +110,6 @@ export default {
     resetQuery() {
       this.resetForm('queryForm')
       this.handleQuery()
-    },
-    beforeUpload(file) {
-      const maxSize = 50 * 1024 * 1024
-      if (file.size > maxSize) {
-        this.$modal.msgError('文件大小不能超过 50MB')
-        return false
-      }
-      return true
     },
     handleUpload(options) {
       const formData = new FormData()

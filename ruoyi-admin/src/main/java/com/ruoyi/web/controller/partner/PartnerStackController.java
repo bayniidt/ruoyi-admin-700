@@ -37,6 +37,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.domain.entity.SysUser;
+import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.system.service.AgentDataScopeService;
@@ -74,12 +75,10 @@ public class PartnerStackController extends BaseController
     @Value("${partnerstack.token:}")
     private String platformToken;
 
-    private final ISysUserService userService;
     private final AgentDataScopeService agentDataScopeService;
 
-    public PartnerStackController(ISysUserService userService, AgentDataScopeService agentDataScopeService)
+    public PartnerStackController(ISysUserService ignoredUserService, AgentDataScopeService agentDataScopeService)
     {
-        this.userService = userService;
         this.agentDataScopeService = agentDataScopeService;
     }
 
@@ -480,7 +479,9 @@ public class PartnerStackController extends BaseController
 
     private PartnerAccess scopedPartnerAccess()
     {
-        SysUser user = userService.selectUserById(getUserId());
+        // JwtAuthenticationTokenFilter 已从 Redis 加载当前用户，避免每个 PartnerStack 请求再次查库。
+        LoginUser loginUser = SecurityUtils.getLoginUser();
+        SysUser user = loginUser.getUser();
         if (user == null || !StringUtils.hasText(user.getPartnerStackKey()))
         {
             throw new ServiceException("当前用户未绑定 PartnerStack Key，请先在个人中心完成绑定");
