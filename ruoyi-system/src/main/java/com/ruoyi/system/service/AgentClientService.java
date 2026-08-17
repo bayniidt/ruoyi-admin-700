@@ -139,6 +139,34 @@ public class AgentClientService
         }
     }
 
+    @Transactional
+    public void changePassword(Long agentId, String password)
+    {
+        if (agentId == null)
+        {
+            throw new ServiceException("代理不存在");
+        }
+        if (StringUtils.isBlank(password) || password.length() < 6 || password.length() > 20)
+        {
+            throw new ServiceException("密码长度必须介于6和20之间");
+        }
+        AgentClient agent = agentClientMapper.selectAgentById(agentId);
+        if (agent == null || agent.getSysUserId() == null)
+        {
+            throw new ServiceException("代理不存在");
+        }
+
+        String passwordHash = SecurityUtils.encryptPassword(password);
+        SysUser user = new SysUser();
+        user.setUserId(agent.getSysUserId());
+        user.setPassword(passwordHash);
+        if (sysUserService.resetPwd(user) == 0
+                || agentClientMapper.updatePasswordHash(agentId, passwordHash) == 0)
+        {
+            throw new ServiceException("代理密码更换失败");
+        }
+    }
+
     public AgentClient authenticate(String apiKey, String apiSecret)
     {
         if (StringUtils.isBlank(apiKey) || StringUtils.isBlank(apiSecret))

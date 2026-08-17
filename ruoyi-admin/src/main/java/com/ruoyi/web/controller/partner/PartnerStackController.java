@@ -1272,8 +1272,9 @@ public class PartnerStackController extends BaseController
             row.put("transactionAmount", money(row.getBigDecimal("transactionAmount").add(amount)));
         }
 
+        JSONArray dashboardRewards = dashboardCommissionRewards(rewards);
         BigDecimal rewardAmount = BigDecimal.ZERO;
-        for (Object item : rewards)
+        for (Object item : dashboardRewards)
         {
             JSONObject reward = (JSONObject) item;
             JSONObject row = dashboardRow(rows, reward, fallbackSubId);
@@ -1295,7 +1296,7 @@ public class PartnerStackController extends BaseController
         summary.put("validActions", validActionCount);
         summary.put("transactions", transactions.size());
         summary.put("transactionAmount", money(transactionAmount));
-        summary.put("rewards", rewards.size());
+        summary.put("rewards", dashboardRewards.size());
         summary.put("rewardAmount", money(rewardAmount));
         // PartnerStack 的这四个接口没有返回点击字段，保留为 0，避免把动作数伪装成点击数。
         summary.put("rawClicks", 0L);
@@ -1305,7 +1306,7 @@ public class PartnerStackController extends BaseController
         result.put("partnerStackKey", partnerStackKey);
         result.put("summary", summary);
         result.put("rows", sortedRows);
-        JSONArray subIds = collectSubIds(fallbackSubId, customers, actions, transactions, rewards);
+        JSONArray subIds = collectSubIds(fallbackSubId, customers, actions, transactions, dashboardRewards);
         visibleSubIds.forEach(value -> {
             if (!subIds.contains(value))
             {
@@ -1313,6 +1314,22 @@ public class PartnerStackController extends BaseController
             }
         });
         result.put("subIds", subIds);
+        return result;
+    }
+
+    static JSONArray dashboardCommissionRewards(JSONArray rewards)
+    {
+        JSONArray result = new JSONArray();
+        for (Object item : rewards)
+        {
+            JSONObject reward = (JSONObject) item;
+            JSONObject source = reward.getJSONObject("source");
+            String sourceType = source == null ? null : source.getString("type");
+            if (!"action".equalsIgnoreCase(StringUtils.trimWhitespace(sourceType)))
+            {
+                result.add(reward);
+            }
+        }
         return result;
     }
 

@@ -19,6 +19,8 @@ public interface AgentClientMapper
 
     AgentClient selectAgentBySysUserId(Long sysUserId);
 
+    AgentClient selectAgentById(Long agentId);
+
     Long selectAgentRoleId();
 
     int countByOwnerAndUserName(@Param("ownerUserId") Long ownerUserId, @Param("userName") String userName);
@@ -31,6 +33,8 @@ public interface AgentClientMapper
             @Param("apiSecretHash") String apiSecretHash);
 
     int updateAgent(@Param("agent") AgentClient agent, @Param("ownerUserId") Long ownerUserId);
+
+    int updatePasswordHash(@Param("agentId") Long agentId, @Param("passwordHash") String passwordHash);
 
     int insertUsage(AgentUsage usage);
 }

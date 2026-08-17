@@ -51,6 +51,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="210" align="center" />
+        <el-table-column v-if="isAdmin" label="操作" width="140" align="center" fixed="right">
+          <template slot-scope="scope">
+            <el-button type="text" icon="el-icon-key" @click="handleChangePassword(scope.row)">更换密码</el-button>
+          </template>
+        </el-table-column>
       </el-table>
 
       <div class="table-footer">
@@ -121,7 +126,9 @@
 </template>
 
 <script>
-import { addAgent, listAgents, updateAgent } from '@/api/agent'
+import { mapGetters } from 'vuex'
+import { addAgent, changeAgentPassword, listAgents, updateAgent } from '@/api/agent'
+import passwordRule from '@/utils/passwordRule'
 
 function createDefaultForm() {
   return {
@@ -137,6 +144,7 @@ function createDefaultForm() {
 
 export default {
   name: 'AgentManage',
+  mixins: [passwordRule],
   data() {
     return {
       open: false,
@@ -179,6 +187,12 @@ export default {
           { required: true, message: '佣金比例不能为空', trigger: 'change' }
         ]
       }
+    }
+  },
+  computed: {
+    ...mapGetters(['roles']),
+    isAdmin() {
+      return this.roles.includes('admin')
     }
   },
   created() {
@@ -246,6 +260,19 @@ export default {
       }).catch(() => {
         row[field] = previousValue
       })
+    },
+    handleChangePassword(row) {
+      this.$prompt(`请输入「${row.userName}」的新密码`, '更换密码', {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        closeOnClickModal: false,
+        inputType: 'password',
+        inputValidator: this.pwdPromptValidator
+      }).then(({ value }) => {
+        return changeAgentPassword(row.agentId, value)
+      }).then(() => {
+        this.$message.success('密码更换成功')
+      }).catch(() => {})
     },
     formatMoney(value) {
       return Number(value || 0).toFixed(2)

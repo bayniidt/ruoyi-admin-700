@@ -204,6 +204,23 @@ class PartnerStackControllerTest
     }
 
     @Test
+    void excludesActionRewardsFromDashboardCommission()
+    {
+        JSONObject transactionReward = JSONObject.of(
+                "amount", 17347,
+                "source", JSONObject.of("type", "transaction"));
+        JSONObject actionReward = JSONObject.of(
+                "amount", 44000,
+                "source", JSONObject.of("type", "action"));
+
+        JSONArray dashboardRewards = PartnerStackController.dashboardCommissionRewards(
+                JSONArray.of(transactionReward, actionReward));
+
+        assertEquals(1, dashboardRewards.size());
+        assertEquals(transactionReward, dashboardRewards.getJSONObject(0));
+    }
+
+    @Test
     void zeroValueRowsRespectSelectedSubIdFilter()
     {
         List<JSONObject> rows = new ArrayList<>();

@@ -85,6 +85,12 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         from agent_client where sys_user_id = #{sysUserId} limit 1
     </select>
 
+    <select id="selectAgentById" parameterType="Long" resultMap="AgentClientResult">
+        select agent_id, owner_user_id, sys_user_id, user_name, password_hash, nick_name, phonenumber, email,
+               commission_rate, partner_customer_key, api_key, api_secret_hash, status, remark, create_by, create_time
+        from agent_client where agent_id = #{agentId} limit 1
+    </select>
+
     <select id="selectAgentRoleId" resultType="Long">
         select role_id from sys_role where role_key = 'agent' and status = '0' limit 1
     </select>
@@ -122,6 +128,12 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         </set>
         where agent_id = #{agent.agentId}
         <if test="ownerUserId != null">and owner_user_id = #{ownerUserId}</if>
+    </update>
+
+    <update id="updatePasswordHash">
+        update agent_client
+        set password_hash = #{passwordHash}, update_time = sysdate()
+        where agent_id = #{agentId}
     </update>
 
     <insert id="insertUsage" parameterType="AgentUsage">

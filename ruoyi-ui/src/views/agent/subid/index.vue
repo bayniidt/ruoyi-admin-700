@@ -51,6 +51,11 @@
             </el-table-column>
             <el-table-column prop="sourceLabel" label="来源" min-width="180" />
             <el-table-column prop="bindTime" label="绑定时间" min-width="180" />
+            <el-table-column label="操作" width="140" fixed="right">
+              <template slot-scope="scope">
+                <el-button type="text" icon="el-icon-user" @click="openAssignDialog(scope.row)">分配拥有者</el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </el-tab-pane>
       </el-tabs>

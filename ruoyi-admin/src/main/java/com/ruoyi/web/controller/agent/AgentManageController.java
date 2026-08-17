@@ -3,6 +3,7 @@ package com.ruoyi.web.controller.agent;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -67,6 +68,15 @@ public class AgentManageController extends BaseController
         agent.setAgentId(agentId);
         agentClientService.updateAgent(agent, SecurityUtils.isAdmin() ? null : getUserId());
         return success("代理信息更新成功");
+    }
+
+    @PreAuthorize("@ss.hasRole('admin')")
+    @Log(title = "代理登录密码", businessType = BusinessType.UPDATE)
+    @PutMapping("/{agentId}/password")
+    public AjaxResult changePassword(@PathVariable Long agentId, @RequestBody Map<String, String> body)
+    {
+        agentClientService.changePassword(agentId, body.get("password"));
+        return success("代理密码更换成功");
     }
 
     @Log(title = "代理接口密钥", businessType = BusinessType.UPDATE)

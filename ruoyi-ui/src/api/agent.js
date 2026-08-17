@@ -30,3 +30,11 @@ export function updateAgent(agent) {
     data: agent
   })
 }
+
+export function changeAgentPassword(agentId, password) {
+  return request({
+    url: `/agent/manage/${agentId}/password`,
+    method: 'put',
+    data: { password }
+  })
+}

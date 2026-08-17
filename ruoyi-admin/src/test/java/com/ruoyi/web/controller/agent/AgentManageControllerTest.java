@@ -1,13 +1,17 @@
 package com.ruoyi.web.controller.agent;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.lang.reflect.Method;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.ruoyi.system.service.AgentClientService;
 import com.ruoyi.system.service.AgentDataScopeService;
 
@@ -33,5 +37,15 @@ class AgentManageControllerTest
                 mock(AgentClientService.class), mock(AgentDataScopeService.class));
 
         assertNull(controller.resolveManagedAgentUserIds(true, 1L));
+    }
+
+    @Test
+    void changingAgentPasswordRequiresAdminRole() throws Exception
+    {
+        Method method = AgentManageController.class.getMethod("changePassword", Long.class, Map.class);
+
+        PreAuthorize authorization = method.getAnnotation(PreAuthorize.class);
+
+        assertEquals("@ss.hasRole('admin')", authorization.value());
     }
 }

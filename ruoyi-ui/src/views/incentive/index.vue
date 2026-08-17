@@ -100,6 +100,7 @@
 
 <script>
 import { getPartnerStackRewards } from '@/api/partnerstack'
+import { filterVisibleRewards } from './rewardFilter'
 
 export default {
   name: 'IncentivePlan',
@@ -149,7 +150,7 @@ export default {
   methods: {
     async fetchRewards() {
       const { data } = await getPartnerStackRewards({ limit: 100 })
-      const list = this.extractItems(data)
+      const list = filterVisibleRewards(this.extractItems(data))
       this.rewardList = list.map(item => ({
         rewardKey: item.key || '-',
         companyName: item.company?.name || '-',
