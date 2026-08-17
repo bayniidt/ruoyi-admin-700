@@ -16,8 +16,8 @@
       </div>
 
       <el-table :data="agentList" border class="agent-table" v-loading="loading">
-        <el-table-column prop="userName" label="用户名" width="210" />
-        <el-table-column prop="nickName" label="昵称" width="210">
+        <el-table-column prop="userName" label="用户名" min-width="210" />
+        <el-table-column prop="nickName" label="昵称" min-width="210">
           <template slot-scope="scope">
             <el-input
               v-model="scope.row.nickName"
@@ -27,7 +27,7 @@
             />
           </template>
         </el-table-column>
-        <el-table-column prop="remark" label="备注" width="210">
+        <el-table-column prop="remark" label="备注" min-width="210">
           <template slot-scope="scope">
             <el-input
               v-model="scope.row.remark"
@@ -37,7 +37,7 @@
             />
           </template>
         </el-table-column>
-        <el-table-column prop="commissionRate" label="分成比例" width="210" align="center">
+        <el-table-column prop="commissionRate" label="分成比例" min-width="210" align="center">
           <template slot-scope="scope">
             <el-input
               v-model="scope.row.commissionRate"
@@ -50,7 +50,7 @@
             />
           </template>
         </el-table-column>
-        <el-table-column prop="createTime" label="创建时间" width="210" align="center" />
+        <el-table-column prop="createTime" label="创建时间" min-width="210" align="center" />
         <el-table-column v-if="isAdmin" label="操作" width="140" align="center" fixed="right">
           <template slot-scope="scope">
             <el-button type="text" icon="el-icon-key" @click="handleChangePassword(scope.row)">更换密码</el-button>
