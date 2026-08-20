@@ -34,9 +34,8 @@ class PartnerStackControllerTest
     @Test
     void selectsDashboardSourcesForProgressiveLoading()
     {
-        assertEquals(List.of("customers", "actions", "transactions", "rewards"),
-                PartnerStackController.dashboardSources(null));
-        assertEquals(List.of("actions"), PartnerStackController.dashboardSources(" Actions "));
+        assertEquals(List.of("rewards"), PartnerStackController.dashboardSources(null));
+        assertEquals(List.of("rewards"), PartnerStackController.dashboardSources(" Rewards "));
         assertThrows(IllegalArgumentException.class,
                 () -> PartnerStackController.dashboardSources("unknown"));
     }
@@ -229,6 +228,33 @@ class PartnerStackControllerTest
     }
 
     @Test
+    void buildsEveryDashboardMetricFromCommissionRewards()
+    {
+        JSONObject signupReward = reward("rwrd_signup", "action", "act_signup", "cus_signup", "new", 0,
+                null, false);
+        JSONObject firstCommission = reward("rwrd_1", "transaction", "tx_1", "cus_paid", "paid", 100,
+                500, false);
+        JSONObject duplicateCommission = reward("rwrd_2", "transaction", "tx_1", "cus_paid", "paid", 50,
+                500, false);
+        JSONObject declinedCommission = reward("rwrd_3", "transaction", "tx_2", "cus_declined", "declined",
+                30, 200, false);
+        JSONObject archivedCommission = reward("rwrd_4", "transaction", "tx_3", "cus_archived", "paid",
+                40, 300, true);
+
+        JSONObject dashboard = PartnerStackController.buildDashboard("partner", "fallback", Set.of(), null,
+                JSONArray.of(signupReward, firstCommission, duplicateCommission, declinedCommission,
+                        archivedCommission));
+        JSONObject summary = dashboard.getJSONObject("summary");
+
+        assertEquals(4, summary.getIntValue("signups"));
+        assertEquals(1, summary.getIntValue("paidSignups"));
+        assertEquals(3, summary.getIntValue("actions"));
+        assertEquals(1, summary.getIntValue("validActions"));
+        assertEquals(new BigDecimal("5.00"), summary.getBigDecimal("transactionAmount"));
+        assertEquals(new BigDecimal("1.50"), summary.getBigDecimal("rewardAmount"));
+    }
+
+    @Test
     void zeroValueRowsRespectSelectedSubIdFilter()
     {
         List<JSONObject> rows = new ArrayList<>();
@@ -350,5 +376,21 @@ class PartnerStackControllerTest
         return JSONObject.of(
                 "customer", JSONObject.of("key", customerKey),
                 "amount_usd", amountUsd);
+    }
+
+    private JSONObject reward(String rewardKey, String sourceType, String sourceKey, String customerKey,
+            String status, int commissionAmount, Integer transactionAmount, boolean archived)
+    {
+        JSONObject reward = JSONObject.of(
+                "key", rewardKey,
+                "amount", commissionAmount,
+                "reward_status", status,
+                "source", JSONObject.of("type", sourceType, "key", sourceKey),
+                "customer", JSONObject.of("key", customerKey, "sub_ids", JSONArray.of("sub_1")));
+        if (transactionAmount != null)
+        {
+            reward.put("transaction", JSONObject.of("amount_usd", transactionAmount, "archived", archived));
+        }
+        return reward;
     }
 }

@@ -63,7 +63,7 @@ public class PartnerStackController extends BaseController
     private static final int MAX_REQUEST_ATTEMPTS = 2;
     private static final long RESPONSE_CACHE_TTL_MILLIS = 30_000L;
     private static final long REWARD_STATUS_LOOKAHEAD_MILLIS = Duration.ofDays(7).toMillis();
-    private static final List<String> DASHBOARD_SOURCES = List.of("customers", "actions", "transactions", "rewards");
+    private static final List<String> DASHBOARD_SOURCES = List.of("rewards");
     private static final Map<RequestCacheKey, CachedPartnerResponse> RESPONSE_CACHE = new ConcurrentHashMap<>();
     private static final Map<RequestCacheKey, CompletableFuture<String>> IN_FLIGHT_REQUESTS = new ConcurrentHashMap<>();
 
@@ -91,7 +91,8 @@ public class PartnerStackController extends BaseController
     }
 
     /**
-     * 首页汇总。PartnerStack 金额字段单位为美分，此接口统一转换为美元。
+     * 首页汇总。所有指标均以 PartnerStack 佣金（rewards）为唯一数据源。
+     * Reward 中的交易金额和佣金金额单位均为美分，此接口统一转换为美元。
      */
     @GetMapping("/dashboard")
     public AjaxResult dashboard(@RequestParam(required = false) Long minCreated,
@@ -119,70 +120,21 @@ public class PartnerStackController extends BaseController
         try
         {
             Scope scope = access.scope();
-            Map<String, Object> customerParams = new LinkedHashMap<>();
-            JSONArray customerSource = new JSONArray();
-            boolean loadCustomers = requestedSources.contains("customers");
-            boolean customersRequiredBeforeEvents = scope.requiresCustomerResolution() || StringUtils.hasText(subId);
-            if (customersRequiredBeforeEvents)
-            {
-                customerSource = fetchAllItems("/customers", customerParams, access.token());
-                if (scope.requiresCustomerResolution())
-                {
-                    scope = resolveScope(scope, customerSource);
-                }
-            }
-
-            Map<String, Object> eventParams = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
-            Set<String> selectedCustomerKeys = StringUtils.hasText(subId)
-                    ? matchingCustomerKeys(customerSource, scope, subId, access.fallbackSubId())
-                    : Set.of();
-            putIfPresent(eventParams, "customer_key", scope.queryCustomerKey());
-            JSONArray prefetchedCustomers = customerSource;
-            List<String> sourcesToLoad = requestedSources.stream()
-                    .filter(requestedSource -> !(customersRequiredBeforeEvents && "customers".equals(requestedSource)))
-                    .toList();
-            Map<String, JSONArray> loadedSources = loadNamedSourcesInParallel(sourcesToLoad, requestedSource -> {
-                if ("customers".equals(requestedSource))
-                {
-                    Map<String, Object> params = buildCommonParams(minCreated, maxCreated,
-                            PARTNERSTACK_PAGE_SIZE, null, null);
-                    return fetchAllItems("/customers", params, access.token());
-                }
-                return StringUtils.hasText(subId)
-                        ? fetchAllItemsForCustomers("/" + requestedSource, eventParams, access.token(),
-                                selectedCustomerKeys)
-                        : fetchAllItems("/" + requestedSource, eventParams, access.token());
-            });
-            if (customersRequiredBeforeEvents && loadCustomers)
-            {
-                loadedSources.put("customers", prefetchedCustomers);
-            }
-
-            customerSource = loadedSources.getOrDefault("customers", prefetchedCustomers);
-            JSONArray customers = loadCustomers
-                    ? filterItems(customerSource, scope, subId, minCreated, maxCreated, access.fallbackSubId())
-                    : new JSONArray();
-            JSONArray actionSource = loadedSources.getOrDefault("actions", new JSONArray());
-            JSONArray transactionSource = loadedSources.getOrDefault("transactions", new JSONArray());
-            JSONArray rewardSource = loadedSources.getOrDefault("rewards", new JSONArray());
-            JSONArray actions = filterItems(actionSource, scope, subId, minCreated, maxCreated,
-                    access.fallbackSubId());
-            JSONArray transactions = filterItems(transactionSource, scope, subId, minCreated, maxCreated,
-                    access.fallbackSubId());
+            Map<String, Object> rewardParams = buildCommonParams(minCreated, maxCreated,
+                    PARTNERSTACK_PAGE_SIZE, null, null);
+            putIfPresent(rewardParams, "customer_key", scope.queryCustomerKey());
+            JSONArray rewardSource = fetchAllItems("/rewards", rewardParams, access.token());
             JSONArray rewards = filterItems(rewardSource, scope, subId, minCreated, maxCreated,
                     access.fallbackSubId());
 
             if (StringUtils.hasText(transactionId))
             {
-                customers.clear();
-                actions.clear();
-                transactions.removeIf(item -> !containsIgnoreCase(((JSONObject) item).getString("key"), transactionId));
                 rewards.removeIf(item -> !containsIgnoreCase(((JSONObject) item).getJSONObject("source") == null
                         ? null : ((JSONObject) item).getJSONObject("source").getString("key"), transactionId));
             }
 
-            JSONObject result = buildDashboard(access.displayKey(), access.fallbackSubId(), access.visibleSubIds(), subId,
-                    customers, actions, transactions, rewards);
+            JSONObject result = buildDashboard(access.displayKey(), access.fallbackSubId(), access.visibleSubIds(),
+                    subId, rewards);
             result.put("loadedSources", requestedSources);
             return success(result);
         }
@@ -1469,95 +1421,91 @@ public class PartnerStackController extends BaseController
         return row;
     }
 
-    private JSONObject buildDashboard(String partnerStackKey, String fallbackSubId, Set<String> visibleSubIds,
-            String selectedSubId, JSONArray customers, JSONArray actions, JSONArray transactions, JSONArray rewards)
+    static JSONObject buildDashboard(String partnerStackKey, String fallbackSubId, Set<String> visibleSubIds,
+            String selectedSubId, JSONArray rewards)
     {
         Map<String, JSONObject> rows = new LinkedHashMap<>();
-        long paidCustomers = 0;
-        for (Object item : customers)
-        {
-            JSONObject customer = (JSONObject) item;
-            JSONObject row = dashboardRow(rows, customer, fallbackSubId);
-            row.put("customerCreated", true);
-            if (customer.getBooleanValue("has_paid"))
-            {
-                paidCustomers++;
-                row.put("hasPaid", true);
-            }
-        }
-
-        long actionCount = 0;
-        long validActionCount = 0;
-        long signupCount = 0;
-        long paidSignupCount = 0;
-        for (Object item : actions)
-        {
-            JSONObject action = (JSONObject) item;
-            JSONObject row = dashboardRow(rows, action, fallbackSubId);
-            long value = action.getLongValue("value", 1L);
-            if (value < 1)
-            {
-                value = 1;
-            }
-            actionCount += value;
-            row.put("actions", row.getLongValue("actions") + value);
-            if (!action.getBooleanValue("archived"))
-            {
-                validActionCount += value;
-                row.put("validActions", row.getLongValue("validActions") + value);
-            }
-            String type = action.getString("type");
-            if ("sign_up".equalsIgnoreCase(type))
-            {
-                signupCount += value;
-                row.put("signups", row.getLongValue("signups") + value);
-            }
-            if ("cash_active".equalsIgnoreCase(type) || "new_high_value_advertiser".equalsIgnoreCase(type))
-            {
-                paidSignupCount += value;
-                row.put("paidSignups", row.getLongValue("paidSignups") + value);
-            }
-        }
-
+        Set<String> signupCustomers = new HashSet<>();
+        Set<String> paidSignupCustomers = new HashSet<>();
+        Set<String> transactionKeys = new HashSet<>();
+        Set<String> validTransactionKeys = new HashSet<>();
         BigDecimal transactionAmount = BigDecimal.ZERO;
-        for (Object item : transactions)
-        {
-            JSONObject transaction = (JSONObject) item;
-            JSONObject row = dashboardRow(rows, transaction, fallbackSubId);
-            BigDecimal amount = cents(transaction.containsKey("amount_usd")
-                    ? transaction.get("amount_usd") : transaction.get("amount"));
-            transactionAmount = transactionAmount.add(amount);
-            row.put("transactions", row.getLongValue("transactions") + 1);
-            row.put("transactionAmount", money(row.getBigDecimal("transactionAmount").add(amount)));
-        }
-
-        JSONArray dashboardRewards = dashboardCommissionRewards(rewards);
         BigDecimal rewardAmount = BigDecimal.ZERO;
-        for (Object item : dashboardRewards)
+        long validActionCount = 0;
+        long rewardCount = 0;
+        for (Object item : rewards)
         {
             JSONObject reward = (JSONObject) item;
             JSONObject row = dashboardRow(rows, reward, fallbackSubId);
-            BigDecimal amount = cents(reward.get("amount"));
-            rewardAmount = rewardAmount.add(amount);
+            String customerKey = extractCustomerKey(reward);
+            if (StringUtils.hasText(customerKey) && signupCustomers.add(customerKey))
+            {
+                row.put("signups", row.getLongValue("signups") + 1);
+            }
+
+            if (!isTransactionReward(reward))
+            {
+                continue;
+            }
+            JSONObject source = reward.getJSONObject("source");
+            String transactionKey = source == null ? null : source.getString("key");
+            if (!StringUtils.hasText(transactionKey))
+            {
+                transactionKey = reward.getString("key");
+            }
+            if (transactionKeys.add(transactionKey))
+            {
+                row.put("actions", row.getLongValue("actions") + 1);
+            }
+            if (!isValidCommissionReward(reward) || !validTransactionKeys.add(transactionKey))
+            {
+                continue;
+            }
+
+            validActionCount++;
+            row.put("validActions", row.getLongValue("validActions") + 1);
+            row.put("transactions", row.getLongValue("transactions") + 1);
+            if (StringUtils.hasText(customerKey) && paidSignupCustomers.add(customerKey))
+            {
+                row.put("paidSignups", row.getLongValue("paidSignups") + 1);
+            }
+            JSONObject transaction = reward.getJSONObject("transaction");
+            BigDecimal spend = transaction == null ? BigDecimal.ZERO : cents(transaction.containsKey("amount_usd")
+                    ? transaction.get("amount_usd") : transaction.get("amount"));
+            transactionAmount = transactionAmount.add(spend);
+            row.put("transactionAmount", money(row.getBigDecimal("transactionAmount").add(spend)));
+        }
+
+        for (Object item : rewards)
+        {
+            JSONObject reward = (JSONObject) item;
+            if (!isValidCommissionReward(reward))
+            {
+                continue;
+            }
+            JSONObject row = dashboardRow(rows, reward, fallbackSubId);
+            BigDecimal commission = cents(reward.get("amount"));
+            rewardAmount = rewardAmount.add(commission);
+            rewardCount++;
             row.put("rewards", row.getLongValue("rewards") + 1);
-            row.put("rewardAmount", money(row.getBigDecimal("rewardAmount").add(amount)));
+            row.put("rewardAmount", money(row.getBigDecimal("rewardAmount").add(commission)));
         }
 
         List<JSONObject> sortedRows = aggregateBySubId(rows.values(), fallbackSubId);
         addMissingSubIdRows(sortedRows, visibleSubIds, selectedSubId);
 
         JSONObject summary = new JSONObject();
-        summary.put("customers", customers.size());
-        summary.put("paidCustomers", paidCustomers);
-        summary.put("signups", signupCount);
-        summary.put("paidSignups", paidSignupCount);
-        summary.put("actions", actionCount);
+        summary.put("customers", signupCustomers.size());
+        summary.put("paidCustomers", paidSignupCustomers.size());
+        summary.put("signups", signupCustomers.size());
+        summary.put("paidSignups", paidSignupCustomers.size());
+        summary.put("actions", transactionKeys.size());
         summary.put("validActions", validActionCount);
-        summary.put("transactions", transactions.size());
+        summary.put("transactions", validTransactionKeys.size());
         summary.put("transactionAmount", money(transactionAmount));
-        summary.put("rewards", dashboardRewards.size());
+        summary.put("rewards", rewardCount);
         summary.put("rewardAmount", money(rewardAmount));
-        // PartnerStack 的这四个接口没有返回点击字段，保留为 0，避免把动作数伪装成点击数。
+        // PartnerStack rewards 不返回点击字段，保留为 0，避免伪造数据。
         summary.put("rawClicks", 0L);
         summary.put("uniqueClicks", 0L);
 
@@ -1565,7 +1513,7 @@ public class PartnerStackController extends BaseController
         result.put("partnerStackKey", partnerStackKey);
         result.put("summary", summary);
         result.put("rows", sortedRows);
-        JSONArray subIds = collectSubIds(fallbackSubId, customers, actions, transactions, dashboardRewards);
+        JSONArray subIds = collectSubIds(fallbackSubId, rewards);
         visibleSubIds.forEach(value -> {
             if (!subIds.contains(value))
             {
@@ -1584,12 +1532,34 @@ public class PartnerStackController extends BaseController
             JSONObject reward = (JSONObject) item;
             JSONObject source = reward.getJSONObject("source");
             String sourceType = source == null ? null : source.getString("type");
-            if (!"action".equalsIgnoreCase(StringUtils.trimWhitespace(sourceType)))
+            if ("transaction".equalsIgnoreCase(StringUtils.trimWhitespace(sourceType)))
             {
                 result.add(reward);
             }
         }
         return result;
+    }
+
+    static boolean isTransactionReward(JSONObject reward)
+    {
+        JSONObject source = reward == null ? null : reward.getJSONObject("source");
+        return source != null && "transaction".equalsIgnoreCase(
+                StringUtils.trimWhitespace(source.getString("type")));
+    }
+
+    static boolean isValidCommissionReward(JSONObject reward)
+    {
+        if (!isTransactionReward(reward))
+        {
+            return false;
+        }
+        String status = StringUtils.trimWhitespace(reward.getString("reward_status"));
+        if ("declined".equalsIgnoreCase(status) || "hold".equalsIgnoreCase(status))
+        {
+            return false;
+        }
+        JSONObject transaction = reward.getJSONObject("transaction");
+        return transaction != null && !transaction.getBooleanValue("archived");
     }
 
     static void addMissingSubIdRows(List<JSONObject> rows, Collection<String> visibleSubIds, String selectedSubId)
@@ -1622,7 +1592,7 @@ public class PartnerStackController extends BaseController
                 .thenComparing(row -> row.getString("subId"), Comparator.nullsLast(String::compareTo)));
     }
 
-    private JSONObject dashboardRow(Map<String, JSONObject> rows, JSONObject item, String fallbackSubId)
+    private static JSONObject dashboardRow(Map<String, JSONObject> rows, JSONObject item, String fallbackSubId)
     {
         String customerKey = extractCustomerKey(item);
         if (!StringUtils.hasText(customerKey))
@@ -1654,7 +1624,7 @@ public class PartnerStackController extends BaseController
         return row;
     }
 
-    private List<JSONObject> aggregateBySubId(Collection<JSONObject> customerRows, String fallbackSubId)
+    private static List<JSONObject> aggregateBySubId(Collection<JSONObject> customerRows, String fallbackSubId)
     {
         Map<String, JSONObject> rows = new LinkedHashMap<>();
         for (JSONObject source : customerRows)
@@ -1692,7 +1662,7 @@ public class PartnerStackController extends BaseController
         return result;
     }
 
-    private JSONArray collectSubIds(String fallbackSubId, JSONArray... sources)
+    private static JSONArray collectSubIds(String fallbackSubId, JSONArray... sources)
     {
         Set<String> values = new HashSet<>();
         for (JSONArray source : sources)
@@ -1715,7 +1685,7 @@ public class PartnerStackController extends BaseController
         return new JSONArray(new ArrayList<>(values));
     }
 
-    private String firstSubId(JSONObject item)
+    private static String firstSubId(JSONObject item)
     {
         JSONObject customer = item.getJSONObject("customer");
         JSONArray subIds = customer == null ? item.getJSONArray("sub_ids") : customer.getJSONArray("sub_ids");

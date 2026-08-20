@@ -194,16 +194,13 @@ const emptySummary = () => ({
   rewardAmount: 0
 })
 const dashboardStages = [
-  { source: 'customers', label: '正在加载广告户...' },
-  { source: 'actions', label: '正在加载动作数据...' },
-  { source: 'transactions', label: '正在加载消耗数据...' },
-  { source: 'rewards', label: '正在加载奖励数据...' }
+  { source: 'rewards', label: '正在加载佣金数据...' }
 ]
 const sourceFields = {
-  customers: ['customers', 'paidCustomers'],
-  actions: ['signups', 'paidSignups', 'actions', 'validActions'],
-  transactions: ['transactions', 'transactionAmount'],
-  rewards: ['rewards', 'rewardAmount']
+  rewards: [
+    'customers', 'paidCustomers', 'signups', 'paidSignups', 'actions', 'validActions',
+    'transactions', 'transactionAmount', 'rewards', 'rewardAmount'
+  ]
 }
 
 export default {
