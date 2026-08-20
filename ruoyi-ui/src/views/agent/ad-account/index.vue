@@ -10,6 +10,7 @@
             start-placeholder="开始时间"
             end-placeholder="结束时间"
             value-format="yyyy-MM-dd HH:mm:ss"
+            :default-time="['00:00:00', '23:59:59']"
           />
         </el-form-item>
         <el-form-item label="广告户ID">
@@ -104,6 +105,7 @@
 
 <script>
 import { getPartnerStackAdAccounts, getPartnerStackTransactionDetails } from '@/api/partnerstack'
+import { buildDateRangeParams } from './dateRange'
 
 const formatDateTime = date => {
   const pad = value => `${value}`.padStart(2, '0')
@@ -193,15 +195,7 @@ export default {
       }
     },
     buildRangeParams() {
-      const [start, end] = this.filters.dateRange || []
-      const params = {}
-      if (start) {
-        params.minCreated = new Date(start).getTime()
-      }
-      if (end) {
-        params.maxCreated = new Date(end).getTime()
-      }
-      return params
+      return buildDateRangeParams(this.filters.dateRange)
     },
     extractRows(response) {
       if (!response) {
