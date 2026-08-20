@@ -6,9 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
+import java.io.ByteArrayInputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -17,8 +20,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.springframework.mock.web.MockHttpServletResponse;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.ruoyi.common.annotation.Excel;
+import com.ruoyi.common.utils.poi.ExcelUtil;
 import com.sun.net.httpserver.HttpServer;
 
 class PartnerStackControllerTest
@@ -240,6 +247,77 @@ class PartnerStackControllerTest
         Supplier<Integer> third = concurrentSource(started, 3);
 
         assertEquals(List.of(1, 2, 3), PartnerStackController.runInParallel(List.of(first, second, third)));
+    }
+
+    @Test
+    void mapsTransactionKeyAndActualRewardStatusLikeReferenceExport()
+    {
+        JSONObject transaction = JSONObject.of(
+                "key", "7669986365668474896_101_1_20260818",
+                "customer", JSONObject.of("key", "cus_partnerstack"));
+        JSONObject pending = JSONObject.of(
+                "reward_status", "pending",
+                "updated_at", 100L,
+                "source", JSONObject.of("type", "transaction", "key", transaction.getString("key")));
+        JSONObject approved = JSONObject.of(
+                "reward_status", "approved",
+                "updated_at", 200L,
+                "source", JSONObject.of("type", "transaction", "key", transaction.getString("key")));
+
+        assertEquals("7669986365668474896", PartnerStackController.transactionCustomerKey(transaction));
+        assertEquals("approved", PartnerStackController.transactionRewardStatuses(
+                JSONArray.of(pending, approved)).get(transaction.getString("key")));
+        assertEquals("待审核", PartnerStackController.rewardStatusLabel("pending"));
+        assertEquals("已通过", PartnerStackController.rewardStatusLabel("approved"));
+        assertEquals("待审核", PartnerStackController.rewardStatusLabel("paid"));
+        assertEquals("待审核", PartnerStackController.rewardStatusLabel(null));
+    }
+
+    @Test
+    void exportColumnsMatchReferenceWorkbookOrder()
+    {
+        List<String> headers = Arrays.stream(PartnerStackController.ActionRecordRow.class.getDeclaredFields())
+                .filter(field -> field.isAnnotationPresent(Excel.class))
+                .sorted(Comparator.comparingInt(field -> field.getAnnotation(Excel.class).sort()))
+                .map(field -> field.getAnnotation(Excel.class).name())
+                .toList();
+
+        assertEquals(List.of("交易 Key", "客户 Key", "SubId", "状态", "有效消耗(美分)", "时间"), headers);
+    }
+
+    @Test
+    void convertsExportCentsToDialogDollars()
+    {
+        PartnerStackController.ActionRecordRow row = new PartnerStackController.ActionRecordRow(
+                "transaction", "customer", "fuhao", "待审核", new BigDecimal("2505"),
+                "2026-08-19 06:00:00");
+
+        assertEquals(new BigDecimal("25.05"), row.getAmountUsd());
+    }
+
+    @Test
+    void generatedWorkbookMatchesReferenceSheetAndFields() throws Exception
+    {
+        PartnerStackController.ActionRecordRow row = new PartnerStackController.ActionRecordRow(
+                "7669986365668474896_101_1_20260818", "7669986365668474896", "fuhao", "待审核",
+                new BigDecimal("2505"), "2026-08-19 06:00:00");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        new ExcelUtil<>(PartnerStackController.ActionRecordRow.class)
+                .exportExcel(response, List.of(row), "【交易信息】数据");
+
+        try (var workbook = WorkbookFactory.create(new ByteArrayInputStream(response.getContentAsByteArray())))
+        {
+            var sheet = workbook.getSheetAt(0);
+            assertEquals("【交易信息】数据", sheet.getSheetName());
+            assertEquals(List.of("交易 Key", "客户 Key", "SubId", "状态", "有效消耗(美分)", "时间"),
+                    IntStream.range(0, 6).mapToObj(index -> sheet.getRow(0).getCell(index).getStringCellValue())
+                            .toList());
+            assertEquals("7669986365668474896_101_1_20260818", sheet.getRow(1).getCell(0).getStringCellValue());
+            assertEquals("7669986365668474896", sheet.getRow(1).getCell(1).getStringCellValue());
+            assertEquals(2505D, sheet.getRow(1).getCell(4).getNumericCellValue());
+            assertEquals("2026-08-19 06:00:00", sheet.getRow(1).getCell(5).getStringCellValue());
+        }
     }
 
     private Supplier<Integer> concurrentSource(CountDownLatch started, int result)

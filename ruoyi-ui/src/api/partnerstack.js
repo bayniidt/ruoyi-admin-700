@@ -27,6 +27,10 @@ export function getPartnerStackTransactions(params) {
   return partnerStackGet('/partnerstack/transactions', params)
 }
 
+export function getPartnerStackActionRecords(params) {
+  return partnerStackGet('/partnerstack/action-records', params)
+}
+
 export function getPartnerStackAdAccounts(params) {
   return partnerStackGet('/partnerstack/ad-accounts', params)
 }

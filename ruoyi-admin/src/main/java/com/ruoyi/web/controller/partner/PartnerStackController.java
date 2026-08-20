@@ -28,18 +28,24 @@ import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.servlet.http.HttpServletResponse;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.ruoyi.common.annotation.Excel;
+import com.ruoyi.common.annotation.Log;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.exception.ServiceException;
+import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.common.utils.SecurityUtils;
+import com.ruoyi.common.utils.poi.ExcelUtil;
 import com.ruoyi.system.service.AgentDataScopeService;
 import com.ruoyi.system.service.ISysUserService;
 
@@ -55,6 +61,7 @@ public class PartnerStackController extends BaseController
     private static final int REQUEST_TIMEOUT_SECONDS = 12;
     private static final int MAX_REQUEST_ATTEMPTS = 2;
     private static final long RESPONSE_CACHE_TTL_MILLIS = 30_000L;
+    private static final long REWARD_STATUS_LOOKAHEAD_MILLIS = Duration.ofDays(7).toMillis();
     private static final List<String> DASHBOARD_SOURCES = List.of("customers", "actions", "transactions", "rewards");
     private static final Map<RequestCacheKey, CachedPartnerResponse> RESPONSE_CACHE = new ConcurrentHashMap<>();
     private static final Map<RequestCacheKey, CompletableFuture<String>> IN_FLIGHT_REQUESTS = new ConcurrentHashMap<>();
@@ -248,6 +255,231 @@ public class PartnerStackController extends BaseController
             filterListResultBySubId(result, subId, access.fallbackSubId());
         }
         return result;
+    }
+
+    /**
+     * 首页 SubId 弹框使用的行动明细。产品定义中的“行动”对应 PartnerStack 交易记录，
+     * 因为弹框和导出均需要交易 Key、有效消耗和业务审核状态。
+     */
+    @GetMapping("/action-records")
+    public AjaxResult actionRecords(@RequestParam String subId,
+            @RequestParam(required = false) Long minCreated,
+            @RequestParam(required = false) Long maxCreated,
+            @RequestParam(required = false) String customerKey,
+            @RequestParam(required = false, defaultValue = "1") Integer pageNum,
+            @RequestParam(required = false, defaultValue = "10") Integer pageSize)
+    {
+        String validationMessage = validateActionRecordRequest(subId, minCreated, maxCreated);
+        if (validationMessage != null)
+        {
+            return error(validationMessage);
+        }
+        try
+        {
+            List<ActionRecordRow> rows = loadActionRecords(subId, minCreated, maxCreated, customerKey);
+            int safePageNum = pageNum == null || pageNum < 1 ? 1 : pageNum;
+            int safePageSize = pageSize == null || pageSize < 1 ? 10 : Math.min(pageSize, 100);
+            List<ActionRecordRow> pagedRows = pageRows(rows, safePageNum, safePageSize);
+            BigDecimal totalAmount = rows.stream()
+                    .map(ActionRecordRow::getAmountCents)
+                    .filter(java.util.Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .movePointLeft(2);
+            return success(new JSONObject()
+                    .fluentPut("total", rows.size())
+                    .fluentPut("totalAmount", money(totalAmount))
+                    .fluentPut("rows", pagedRows));
+        }
+        catch (PartnerStackApiException e)
+        {
+            logger.error("PartnerStack action records request failed: {}", e.getMessage());
+            return AjaxResult.error(e.getStatus(), e.getMessage());
+        }
+    }
+
+    @Log(title = "SubId行动明细", businessType = BusinessType.EXPORT)
+    @PostMapping("/action-records/export")
+    public void exportActionRecords(HttpServletResponse response,
+            @RequestParam String subId,
+            @RequestParam(required = false) Long minCreated,
+            @RequestParam(required = false) Long maxCreated,
+            @RequestParam(required = false) String customerKey)
+    {
+        String validationMessage = validateActionRecordRequest(subId, minCreated, maxCreated);
+        if (validationMessage != null)
+        {
+            throw new ServiceException(validationMessage);
+        }
+        try
+        {
+            List<ActionRecordRow> rows = loadActionRecords(subId, minCreated, maxCreated, customerKey);
+            ExcelUtil<ActionRecordRow> util = new ExcelUtil<>(ActionRecordRow.class);
+            util.exportExcel(response, rows, "【交易信息】数据");
+        }
+        catch (PartnerStackApiException e)
+        {
+            logger.error("PartnerStack action records export failed: {}", e.getMessage());
+            throw new ServiceException(e.getMessage());
+        }
+    }
+
+    private String validateActionRecordRequest(String subId, Long minCreated, Long maxCreated)
+    {
+        if (!StringUtils.hasText(subId))
+        {
+            return "SubId不能为空";
+        }
+        if (minCreated != null && maxCreated != null && minCreated > maxCreated)
+        {
+            return "开始时间不能晚于结束时间";
+        }
+        return null;
+    }
+
+    private List<ActionRecordRow> loadActionRecords(String subId, Long minCreated, Long maxCreated,
+            String customerKey)
+    {
+        PartnerAccess access = scopedPartnerAccess();
+        Scope scope = access.scope();
+        JSONArray customerSource = fetchAllItems("/customers", new LinkedHashMap<>(), access.token());
+        if (scope.requiresCustomerResolution())
+        {
+            scope = resolveScope(scope, customerSource);
+        }
+
+        Set<String> selectedCustomerKeys = matchingCustomerKeys(customerSource, scope, subId,
+                access.fallbackSubId());
+        if (selectedCustomerKeys.isEmpty())
+        {
+            return List.of();
+        }
+
+        Map<String, Object> params = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
+        // PartnerStack transactions 列表不提供 customer_key 查询参数，按日期全量拉取后在服务端收窄。
+        JSONArray transactions = fetchAllItems("/transactions", params, access.token());
+        JSONArray filtered = filterItems(transactions, scope, subId, minCreated, maxCreated,
+                access.fallbackSubId());
+        filtered.removeIf(item -> !(item instanceof JSONObject transaction)
+                || !selectedCustomerKeys.contains(extractCustomerKey(transaction)));
+
+        Map<String, Object> rewardParams = buildCommonParams(minCreated, rewardStatusMaxCreated(maxCreated),
+                PARTNERSTACK_PAGE_SIZE, null, null);
+        JSONArray rewards = fetchAllItems("/rewards", rewardParams, access.token());
+        rewards = filterItems(rewards, scope, subId, minCreated, rewardStatusMaxCreated(maxCreated),
+                access.fallbackSubId());
+        rewards.removeIf(item -> !(item instanceof JSONObject reward)
+                || !selectedCustomerKeys.contains(extractCustomerKey(reward)));
+        Map<String, String> rewardStatuses = transactionRewardStatuses(rewards);
+
+        List<ActionRecordRow> rows = new ArrayList<>();
+        for (Object item : filtered)
+        {
+            if (!(item instanceof JSONObject transaction))
+            {
+                continue;
+            }
+            ActionRecordRow row = toActionRecordRow(transaction, subId, access.fallbackSubId(),
+                    rewardStatuses.get(transaction.getString("key")));
+            if (StringUtils.hasText(customerKey)
+                    && !containsTextIgnoreCase(row.getCustomerKey(), customerKey))
+            {
+                continue;
+            }
+            rows.add(row);
+        }
+        rows.sort(Comparator.comparing(ActionRecordRow::getCreatedAt,
+                Comparator.nullsLast(Comparator.reverseOrder())));
+        return rows;
+    }
+
+    private ActionRecordRow toActionRecordRow(JSONObject transaction, String selectedSubId, String fallbackSubId,
+            String rewardStatus)
+    {
+        String transactionKey = transaction.getString("key");
+        String rowSubId = firstSubId(transaction);
+        if (!StringUtils.hasText(rowSubId))
+        {
+            rowSubId = StringUtils.hasText(selectedSubId) ? selectedSubId : fallbackSubId;
+        }
+        BigDecimal amountCents = transaction.getBigDecimal(
+                transaction.containsKey("amount_usd") ? "amount_usd" : "amount");
+        if (amountCents == null)
+        {
+            amountCents = BigDecimal.ZERO;
+        }
+        return new ActionRecordRow(transactionKey, transactionCustomerKey(transaction), rowSubId,
+                rewardStatusLabel(rewardStatus),
+                amountCents.setScale(0, RoundingMode.HALF_UP), formatDateTime(transaction.getLong("created_at")));
+    }
+
+    static String transactionCustomerKey(JSONObject transaction)
+    {
+        String transactionKey = transaction == null ? null : transaction.getString("key");
+        if (StringUtils.hasText(transactionKey))
+        {
+            int separator = transactionKey.indexOf('_');
+            if (separator > 0)
+            {
+                return transactionKey.substring(0, separator);
+            }
+        }
+        JSONObject customer = transaction == null ? null : transaction.getJSONObject("customer");
+        if (customer != null && StringUtils.hasText(customer.getString("shared_id")))
+        {
+            return customer.getString("shared_id");
+        }
+        return customer == null ? null : customer.getString("key");
+    }
+
+    private Long rewardStatusMaxCreated(Long maxCreated)
+    {
+        if (maxCreated == null)
+        {
+            return null;
+        }
+        return maxCreated > Long.MAX_VALUE - REWARD_STATUS_LOOKAHEAD_MILLIS
+                ? Long.MAX_VALUE : maxCreated + REWARD_STATUS_LOOKAHEAD_MILLIS;
+    }
+
+    static Map<String, String> transactionRewardStatuses(JSONArray rewards)
+    {
+        Map<String, JSONObject> latestRewards = new LinkedHashMap<>();
+        for (Object item : rewards)
+        {
+            if (!(item instanceof JSONObject reward))
+            {
+                continue;
+            }
+            JSONObject source = reward.getJSONObject("source");
+            if (source == null || !"transaction".equalsIgnoreCase(source.getString("type"))
+                    || !StringUtils.hasText(source.getString("key")))
+            {
+                continue;
+            }
+            String transactionKey = source.getString("key");
+            JSONObject current = latestRewards.get(transactionKey);
+            if (current == null || reward.getLongValue("updated_at") > current.getLongValue("updated_at"))
+            {
+                latestRewards.put(transactionKey, reward);
+            }
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        latestRewards.forEach((key, reward) -> result.put(key, reward.getString("reward_status")));
+        return result;
+    }
+
+    static String rewardStatusLabel(String status)
+    {
+        if (!StringUtils.hasText(status))
+        {
+            return "待审核";
+        }
+        return switch (status.trim().toLowerCase(java.util.Locale.ROOT))
+        {
+            case "pending" -> "待审核";
+            case "approved" -> "已通过";
+            default -> "待审核";
+        };
     }
 
     @GetMapping("/transaction-details")
@@ -1482,6 +1714,73 @@ public class PartnerStackController extends BaseController
     private static BigDecimal money(BigDecimal value)
     {
         return value.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    public static class ActionRecordRow
+    {
+        @Excel(name = "交易 Key", sort = 1, width = 42)
+        private String transactionKey;
+
+        @Excel(name = "客户 Key", sort = 2, width = 24)
+        private String customerKey;
+
+        @Excel(name = "SubId", sort = 3, width = 18)
+        private String subId;
+
+        @Excel(name = "状态", sort = 4, width = 12)
+        private String status;
+
+        @Excel(name = "有效消耗(美分)", sort = 5, width = 18, cellType = Excel.ColumnType.NUMERIC)
+        private BigDecimal amountCents;
+
+        @Excel(name = "时间", sort = 6, width = 22)
+        private String createdAt;
+
+        public ActionRecordRow(String transactionKey, String customerKey, String subId, String status,
+                BigDecimal amountCents, String createdAt)
+        {
+            this.transactionKey = transactionKey;
+            this.customerKey = customerKey;
+            this.subId = subId;
+            this.status = status;
+            this.amountCents = amountCents;
+            this.createdAt = createdAt;
+        }
+
+        public String getTransactionKey()
+        {
+            return transactionKey;
+        }
+
+        public String getCustomerKey()
+        {
+            return customerKey;
+        }
+
+        public String getSubId()
+        {
+            return subId;
+        }
+
+        public String getStatus()
+        {
+            return status;
+        }
+
+        public BigDecimal getAmountCents()
+        {
+            return amountCents;
+        }
+
+        public BigDecimal getAmountUsd()
+        {
+            return money(amountCents == null ? BigDecimal.ZERO : amountCents.movePointLeft(2));
+        }
+
+        public String getCreatedAt()
+        {
+            return createdAt;
+        }
     }
 
     record Scope(Set<String> attributionKeys, Set<String> partnershipKeys, Set<String> customerKeys,
