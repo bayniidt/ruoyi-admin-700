@@ -40,10 +40,19 @@
       <el-table :data="accountList" border v-loading="loading">
         <el-table-column prop="accountId" label="广告户ID" min-width="220">
           <template slot-scope="scope">
-            <el-button type="text" class="account-link" @click="openTransactionDialog(scope.row)">{{ scope.row.accountId }}</el-button>
+            <el-button type="text" class="account-link" @click="openActionDialog(scope.row)">{{ scope.row.accountId }}</el-button>
           </template>
         </el-table-column>
-        <el-table-column prop="subId" label="SubId" min-width="150" align="center" />
+        <el-table-column prop="subId" label="SubId" min-width="150" align="center">
+          <template slot-scope="scope">
+            <el-button
+              type="text"
+              class="subid-link"
+              :disabled="!scope.row.subId || scope.row.subId === '-'"
+              @click="openActionDialog(scope.row)"
+            >{{ scope.row.subId || '-' }}</el-button>
+          </template>
+        </el-table-column>
         <el-table-column prop="countryIso" label="国家代码" min-width="130" align="center" />
         <el-table-column prop="statusLabel" label="状态" min-width="120" align="center">
           <template slot-scope="scope">
@@ -74,37 +83,79 @@
     </el-card>
 
     <el-dialog
-      :title="`${dialog.contact || dialog.customerKey || '-'} 的客户活动`"
-      :visible.sync="dialog.open"
+      :title="`SubId: ${actionDialog.subId} 的行动列表`"
+      :visible.sync="actionDialog.visible"
       width="900px"
       append-to-body
-      class="transaction-dialog"
+      class="action-dialog"
+      @closed="resetActionDialog"
     >
-      <el-empty v-if="!dialog.loading && !filteredTransactions.length" description="暂无活动数据" />
-      <el-timeline v-else v-loading="dialog.loading" class="activity-timeline">
-        <el-timeline-item
-          v-for="item in filteredTransactions"
-          :key="item.eventId"
-          :timestamp="item.eventDate"
-          placement="top"
-          color="#e8e8e8"
-        >
-          <div class="activity-row">
-            <span class="activity-desc">{{ item.description }}</span>
-            <span class="activity-date">{{ item.eventDate }}</span>
-          </div>
-        </el-timeline-item>
-      </el-timeline>
-
-      <div slot="footer">
-        <el-button @click="dialog.open = false">关闭</el-button>
+      <div class="action-toolbar">
+        <div class="action-summary">
+          共 <strong>{{ actionDialog.total }}</strong> 个行动，
+          总有效消耗: <strong>${{ formatMoney(actionDialog.totalAmount) }}</strong>
+        </div>
+        <div class="action-tools">
+          <el-input
+            v-model.trim="actionDialog.customerKey"
+            placeholder="搜索广告账户ID"
+            clearable
+            prefix-icon="el-icon-search"
+            @keyup.enter.native="searchActionRecords"
+            @clear="searchActionRecords"
+          />
+          <el-button
+            type="primary"
+            icon="el-icon-download"
+            :loading="actionDialog.exporting"
+            @click="exportActionRecords"
+          >导出</el-button>
+        </div>
       </div>
+
+      <el-table
+        v-loading="actionDialog.loading"
+        :data="actionDialog.rows"
+        border
+        empty-text="暂无行动数据"
+      >
+        <el-table-column prop="transactionKey" label="交易 ID" min-width="310" />
+        <el-table-column prop="amountUsd" label="有效消耗" width="150" align="right">
+          <template slot-scope="scope">${{ formatMoney(scope.row.amountUsd) }}</template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="交易时间" width="180" />
+        <el-table-column prop="status" label="状态" width="110" align="center">
+          <template slot-scope="scope">
+            <el-tag :type="actionStatusType(actionStatusLabel(scope.row.status))" effect="plain">
+              {{ actionStatusLabel(scope.row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-pagination
+        v-if="actionDialog.total > actionDialog.pageSize"
+        class="action-pagination"
+        background
+        layout="prev, pager, next, total"
+        :current-page="actionDialog.pageNum"
+        :page-size="actionDialog.pageSize"
+        :total="actionDialog.total"
+        @current-change="changeActionPage"
+      />
+
+      <span slot="footer">
+        <el-button @click="actionDialog.visible = false">关闭</el-button>
+      </span>
     </el-dialog>
   </div>
 </template>
 
 <script>
-import { getPartnerStackAdAccounts, getPartnerStackTransactionDetails } from '@/api/partnerstack'
+import {
+  getPartnerStackActionRecords,
+  getPartnerStackAdAccounts
+} from '@/api/partnerstack'
 import { buildDateRangeParams } from './dateRange'
 
 const formatDateTime = date => {
@@ -141,19 +192,20 @@ export default {
         pageSize: 10,
         total: 0
       },
-      dialog: {
-        open: false,
+      actionDialog: {
+        visible: false,
         loading: false,
-        customerKey: '',
-        contact: '',
+        exporting: false,
+        requestId: 0,
         subId: '',
+        customerKey: '',
+        dateRange: [],
+        pageNum: 1,
+        pageSize: 10,
+        total: 0,
+        totalAmount: 0,
         rows: []
       }
-    }
-  },
-  computed: {
-    filteredTransactions() {
-      return this.dialog.rows
     }
   },
   created() {
@@ -223,16 +275,6 @@ export default {
       const pad = num => `${num}`.padStart(2, '0')
       return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
     },
-    formatDate(value) {
-      if (!value || value === '-') {
-        return '-'
-      }
-      const date = new Date(value)
-      if (Number.isNaN(date.getTime())) {
-        return value
-      }
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    },
     handleSearch() {
       this.pagination.pageNum = 1
       this.fetchAccounts()
@@ -257,28 +299,86 @@ export default {
       this.pagination.pageNum = 1
       this.fetchAccounts()
     },
-    async openTransactionDialog(row) {
-      this.dialog.open = true
-      this.dialog.loading = true
-      this.dialog.customerKey = row.customerKey
-      this.dialog.contact = row.contact
-      this.dialog.subId = row.subId
-      try {
-        const response = await getPartnerStackTransactionDetails({
-          customerKey: row.customerKey,
-          subId: row.subId
-        })
-        const rows = response.data && response.data.rows ? response.data.rows : []
-        this.dialog.rows = rows.map(item => ({
-          eventId: item.eventId || '-',
-          description: item.description || '-',
-          amountSUM: Number(item.amountSUM || 0).toFixed(2),
-          eventTime: item.eventTime || '-',
-          eventDate: this.formatDate(item.eventTime)
-        }))
-      } finally {
-        this.dialog.loading = false
+    async openActionDialog(row) {
+      if (!row.subId || row.subId === '-') return
+      this.actionDialog.visible = true
+      this.actionDialog.subId = row.subId
+      this.actionDialog.customerKey = ''
+      this.actionDialog.dateRange = [...(this.filters.dateRange || [])]
+      this.actionDialog.pageNum = 1
+      await this.fetchActionRecords()
+    },
+    actionRecordParams(includePagination = true) {
+      const params = {
+        subId: this.actionDialog.subId,
+        ...buildDateRangeParams(this.actionDialog.dateRange),
+        customerKey: this.actionDialog.customerKey || undefined
       }
+      if (includePagination) {
+        params.pageNum = this.actionDialog.pageNum
+        params.pageSize = this.actionDialog.pageSize
+      }
+      return params
+    },
+    async fetchActionRecords() {
+      const requestId = ++this.actionDialog.requestId
+      this.actionDialog.loading = true
+      try {
+        const response = await getPartnerStackActionRecords(this.actionRecordParams())
+        if (requestId !== this.actionDialog.requestId) return
+        const data = response.data || {}
+        this.actionDialog.rows = data.rows || []
+        this.actionDialog.total = Number(data.total || 0)
+        this.actionDialog.totalAmount = Number(data.totalAmount || 0)
+      } finally {
+        if (requestId === this.actionDialog.requestId) {
+          this.actionDialog.loading = false
+        }
+      }
+    },
+    searchActionRecords() {
+      this.actionDialog.pageNum = 1
+      this.fetchActionRecords()
+    },
+    changeActionPage(pageNum) {
+      this.actionDialog.pageNum = pageNum
+      this.fetchActionRecords()
+    },
+    async exportActionRecords() {
+      this.actionDialog.exporting = true
+      const safeSubId = this.actionDialog.subId.replace(/[^a-zA-Z0-9_-]/g, '_')
+      try {
+        await this.download(
+          '/partnerstack/action-records/export',
+          this.actionRecordParams(false),
+          `transaction_${safeSubId}_${new Date().getTime()}.xlsx`
+        )
+      } finally {
+        this.actionDialog.exporting = false
+      }
+    },
+    resetActionDialog() {
+      this.actionDialog.requestId += 1
+      Object.assign(this.actionDialog, {
+        loading: false,
+        exporting: false,
+        subId: '',
+        customerKey: '',
+        dateRange: [],
+        pageNum: 1,
+        total: 0,
+        totalAmount: 0,
+        rows: []
+      })
+    },
+    actionStatusType(status) {
+      return status === '已通过' ? 'success' : 'warning'
+    },
+    actionStatusLabel(status) {
+      return status === '已通过' ? '已通过' : '待审核'
+    },
+    formatMoney(value) {
+      return Number(value || 0).toFixed(2)
     }
   }
 }
@@ -319,6 +419,45 @@ export default {
   font-weight: 500;
 }
 
+.subid-link {
+  padding: 0;
+  color: #1890ff;
+}
+
+.action-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin: -8px 0 16px;
+  padding: 16px;
+  background: #f7f9fc;
+  border-radius: 6px;
+}
+
+.action-summary {
+  flex: 1;
+  color: #909399;
+}
+
+.action-summary strong {
+  color: #303133;
+}
+
+.action-tools {
+  display: flex;
+  gap: 12px;
+}
+
+.action-tools ::v-deep .el-input {
+  width: 280px;
+}
+
+.action-pagination {
+  margin-top: 16px;
+  text-align: right;
+}
+
 .status-dot {
   display: inline-block;
   width: 8px;
@@ -336,26 +475,4 @@ export default {
   background: #2bb673;
 }
 
-.activity-timeline {
-  padding: 12px 8px 0;
-}
-
-.activity-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  color: #303133;
-  font-size: 16px;
-  line-height: 24px;
-}
-
-.activity-desc {
-  flex: 1;
-}
-
-.activity-date {
-  min-width: 120px;
-  color: #606266;
-  text-align: right;
-}
 </style>

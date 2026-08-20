@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -239,14 +240,17 @@ class PartnerStackControllerTest
     }
 
     @Test
-    void loadsIndependentDashboardSourcesInParallel()
+    void loadsNamedDashboardSourcesInParallelAndKeepsTheirResultsMatched()
     {
-        CountDownLatch started = new CountDownLatch(3);
-        Supplier<Integer> first = concurrentSource(started, 1);
-        Supplier<Integer> second = concurrentSource(started, 2);
-        Supplier<Integer> third = concurrentSource(started, 3);
+        CountDownLatch started = new CountDownLatch(4);
 
-        assertEquals(List.of(1, 2, 3), PartnerStackController.runInParallel(List.of(first, second, third)));
+        Map<String, String> loaded = PartnerStackController.loadNamedSourcesInParallel(
+                List.of("customers", "actions", "transactions", "rewards"),
+                source -> concurrentSource(started, source).get());
+
+        assertEquals(List.of("customers", "actions", "transactions", "rewards"),
+                new ArrayList<>(loaded.keySet()));
+        assertEquals("transactions", loaded.get("transactions"));
     }
 
     @Test
@@ -320,7 +324,7 @@ class PartnerStackControllerTest
         }
     }
 
-    private Supplier<Integer> concurrentSource(CountDownLatch started, int result)
+    private <T> Supplier<T> concurrentSource(CountDownLatch started, T result)
     {
         return () ->
         {

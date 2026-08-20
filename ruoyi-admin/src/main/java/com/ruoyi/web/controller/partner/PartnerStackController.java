@@ -24,6 +24,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.util.StringUtils;
@@ -69,7 +70,7 @@ public class PartnerStackController extends BaseController
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
-    private static final ExecutorService DASHBOARD_EXECUTOR = Executors.newFixedThreadPool(3, runnable ->
+    private static final ExecutorService DASHBOARD_EXECUTOR = Executors.newFixedThreadPool(4, runnable ->
     {
         Thread thread = new Thread(runnable, "partnerstack-dashboard");
         thread.setDaemon(true);
@@ -121,12 +122,9 @@ public class PartnerStackController extends BaseController
             Map<String, Object> customerParams = new LinkedHashMap<>();
             JSONArray customerSource = new JSONArray();
             boolean loadCustomers = requestedSources.contains("customers");
-            if (loadCustomers || scope.requiresCustomerResolution() || StringUtils.hasText(subId))
+            boolean customersRequiredBeforeEvents = scope.requiresCustomerResolution() || StringUtils.hasText(subId);
+            if (customersRequiredBeforeEvents)
             {
-                if (!scope.requiresCustomerResolution() && !StringUtils.hasText(subId))
-                {
-                    customerParams = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
-                }
                 customerSource = fetchAllItems("/customers", customerParams, access.token());
                 if (scope.requiresCustomerResolution())
                 {
@@ -134,34 +132,39 @@ public class PartnerStackController extends BaseController
                 }
             }
 
-            JSONArray customers = loadCustomers
-                    ? filterItems(customerSource, scope, subId, minCreated, maxCreated, access.fallbackSubId())
-                    : new JSONArray();
             Map<String, Object> eventParams = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
             Set<String> selectedCustomerKeys = StringUtils.hasText(subId)
                     ? matchingCustomerKeys(customerSource, scope, subId, access.fallbackSubId())
                     : Set.of();
             putIfPresent(eventParams, "customer_key", scope.queryCustomerKey());
-            JSONArray actionSource = new JSONArray();
-            JSONArray transactionSource = new JSONArray();
-            JSONArray rewardSource = new JSONArray();
-            for (String requestedSource : requestedSources)
-            {
+            JSONArray prefetchedCustomers = customerSource;
+            List<String> sourcesToLoad = requestedSources.stream()
+                    .filter(requestedSource -> !(customersRequiredBeforeEvents && "customers".equals(requestedSource)))
+                    .toList();
+            Map<String, JSONArray> loadedSources = loadNamedSourcesInParallel(sourcesToLoad, requestedSource -> {
                 if ("customers".equals(requestedSource))
                 {
-                    continue;
+                    Map<String, Object> params = buildCommonParams(minCreated, maxCreated,
+                            PARTNERSTACK_PAGE_SIZE, null, null);
+                    return fetchAllItems("/customers", params, access.token());
                 }
-                JSONArray items = StringUtils.hasText(subId)
-                        ? fetchAllItemsForCustomers("/" + requestedSource, eventParams, access.token(), selectedCustomerKeys)
+                return StringUtils.hasText(subId)
+                        ? fetchAllItemsForCustomers("/" + requestedSource, eventParams, access.token(),
+                                selectedCustomerKeys)
                         : fetchAllItems("/" + requestedSource, eventParams, access.token());
-                switch (requestedSource)
-                {
-                    case "actions" -> actionSource = items;
-                    case "transactions" -> transactionSource = items;
-                    case "rewards" -> rewardSource = items;
-                    default -> throw new IllegalArgumentException("不支持的首页数据源");
-                }
+            });
+            if (customersRequiredBeforeEvents && loadCustomers)
+            {
+                loadedSources.put("customers", prefetchedCustomers);
             }
+
+            customerSource = loadedSources.getOrDefault("customers", prefetchedCustomers);
+            JSONArray customers = loadCustomers
+                    ? filterItems(customerSource, scope, subId, minCreated, maxCreated, access.fallbackSubId())
+                    : new JSONArray();
+            JSONArray actionSource = loadedSources.getOrDefault("actions", new JSONArray());
+            JSONArray transactionSource = loadedSources.getOrDefault("transactions", new JSONArray());
+            JSONArray rewardSource = loadedSources.getOrDefault("rewards", new JSONArray());
             JSONArray actions = filterItems(actionSource, scope, subId, minCreated, maxCreated,
                     access.fallbackSubId());
             JSONArray transactions = filterItems(transactionSource, scope, subId, minCreated, maxCreated,
@@ -341,7 +344,20 @@ public class PartnerStackController extends BaseController
     {
         PartnerAccess access = scopedPartnerAccess();
         Scope scope = access.scope();
-        JSONArray customerSource = fetchAllItems("/customers", new LinkedHashMap<>(), access.token());
+        Map<String, JSONArray> sources = loadNamedSourcesInParallel(
+                List.of("customers", "transactions", "rewards"), source -> switch (source)
+                {
+                    case "customers" -> fetchAllItems("/customers", new LinkedHashMap<>(), access.token());
+                    case "transactions" -> fetchAllItems("/transactions",
+                            buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null),
+                            access.token());
+                    case "rewards" -> fetchAllItems("/rewards",
+                            buildCommonParams(minCreated, rewardStatusMaxCreated(maxCreated),
+                                    PARTNERSTACK_PAGE_SIZE, null, null),
+                            access.token());
+                    default -> throw new IllegalArgumentException("不支持的行动明细数据源");
+                });
+        JSONArray customerSource = sources.get("customers");
         if (scope.requiresCustomerResolution())
         {
             scope = resolveScope(scope, customerSource);
@@ -354,17 +370,14 @@ public class PartnerStackController extends BaseController
             return List.of();
         }
 
-        Map<String, Object> params = buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
         // PartnerStack transactions 列表不提供 customer_key 查询参数，按日期全量拉取后在服务端收窄。
-        JSONArray transactions = fetchAllItems("/transactions", params, access.token());
+        JSONArray transactions = sources.get("transactions");
         JSONArray filtered = filterItems(transactions, scope, subId, minCreated, maxCreated,
                 access.fallbackSubId());
         filtered.removeIf(item -> !(item instanceof JSONObject transaction)
                 || !selectedCustomerKeys.contains(extractCustomerKey(transaction)));
 
-        Map<String, Object> rewardParams = buildCommonParams(minCreated, rewardStatusMaxCreated(maxCreated),
-                PARTNERSTACK_PAGE_SIZE, null, null);
-        JSONArray rewards = fetchAllItems("/rewards", rewardParams, access.token());
+        JSONArray rewards = sources.get("rewards");
         rewards = filterItems(rewards, scope, subId, minCreated, rewardStatusMaxCreated(maxCreated),
                 access.fallbackSubId());
         rewards.removeIf(item -> !(item instanceof JSONObject reward)
@@ -590,21 +603,22 @@ public class PartnerStackController extends BaseController
             Scope scope = access.scope();
             int safePageNum = pageNum == null || pageNum < 1 ? 1 : pageNum;
             int safePageSize = pageSize == null || pageSize < 1 ? 10 : Math.min(pageSize, 100);
-            JSONArray customerSource;
-            if (scope.requiresCustomerResolution())
+            boolean requiresCustomerResolution = scope.requiresCustomerResolution();
+            Map<String, JSONArray> sources = loadNamedSourcesInParallel(
+                    List.of("customers", "transactions"), source -> {
+                        Map<String, Object> params = "customers".equals(source) && requiresCustomerResolution
+                                ? new LinkedHashMap<>()
+                                : buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null);
+                        return fetchAllItems("/" + source, params, access.token());
+                    });
+            JSONArray customerSource = sources.get("customers");
+            if (requiresCustomerResolution)
             {
-                customerSource = fetchAllItems("/customers", new LinkedHashMap<>(), access.token());
                 scope = resolveScope(scope, customerSource);
-            }
-            else
-            {
-                customerSource = fetchAllItems("/customers",
-                        buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null), access.token());
             }
             JSONArray customers = filterItems(customerSource, scope, subId, minCreated, maxCreated,
                     access.fallbackSubId());
-            JSONArray transactions = filterItems(fetchAllItems("/transactions",
-                    buildCommonParams(minCreated, maxCreated, PARTNERSTACK_PAGE_SIZE, null, null), access.token()),
+            JSONArray transactions = filterItems(sources.get("transactions"),
                     scope, subId, minCreated, maxCreated, access.fallbackSubId());
             Map<String, BigDecimal> transactionAmounts = sumTransactionAmountsByCustomer(transactions);
             List<JSONObject> rows = new ArrayList<>();
@@ -982,6 +996,19 @@ public class PartnerStackController extends BaseController
             }
             throw new IllegalStateException(cause);
         }
+    }
+
+    static <T> Map<String, T> loadNamedSourcesInParallel(List<String> sources, Function<String, T> loader)
+    {
+        List<T> values = runInParallel(sources.stream()
+                .map(source -> (Supplier<T>) () -> loader.apply(source))
+                .toList());
+        Map<String, T> result = new LinkedHashMap<>();
+        for (int index = 0; index < sources.size(); index++)
+        {
+            result.put(sources.get(index), values.get(index));
+        }
+        return result;
     }
 
     private JSONObject requestPartnerStack(String path, Map<String, Object> params, String accessToken)

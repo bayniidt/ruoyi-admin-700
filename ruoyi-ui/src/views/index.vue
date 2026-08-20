@@ -1,5 +1,11 @@
 <template>
-  <div class="dashboard-page">
+  <div
+    v-loading="loading"
+    class="dashboard-page"
+    :element-loading-text="loadingStage || '正在加载数据...'"
+    element-loading-spinner="el-icon-loading"
+    element-loading-background="rgba(245, 247, 250, 0.82)"
+  >
     <section class="filter-panel">
       <el-form :inline="true" :model="filters" class="dashboard-form">
         <el-form-item label="日期范围">
@@ -316,8 +322,13 @@ export default {
         }
       } finally {
         if (requestId === this.dashboardRequestId) {
-          this.loading = false
-          this.loadingStage = ''
+          this.loadingStage = '正在渲染数据...'
+          await this.$nextTick()
+          await new Promise(resolve => window.requestAnimationFrame(resolve))
+          if (requestId === this.dashboardRequestId && !this._isDestroyed) {
+            this.loading = false
+            this.loadingStage = ''
+          }
         }
       }
     },
