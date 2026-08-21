@@ -64,6 +64,10 @@ public class PartnerStackController extends BaseController
     private static final long RESPONSE_CACHE_TTL_MILLIS = 30_000L;
     private static final long REWARD_STATUS_LOOKAHEAD_MILLIS = Duration.ofDays(7).toMillis();
     private static final List<String> DASHBOARD_SOURCES = List.of("rewards");
+    private static final BigDecimal STANDARD_COMMISSION_SPEND_MULTIPLIER = new BigDecimal("5");
+    private static final List<String> EXCLUDED_HIGH_VALUE_ADVERTISER_REWARD_DESCRIPTIONS = List.of(
+            "earn $60 for every new high value advertiser",
+            "earn $400 for every new high value advertiser");
     private static final Map<RequestCacheKey, CachedPartnerResponse> RESPONSE_CACHE = new ConcurrentHashMap<>();
     private static final Map<RequestCacheKey, CompletableFuture<String>> IN_FLIGHT_REQUESTS = new ConcurrentHashMap<>();
 
@@ -126,6 +130,8 @@ public class PartnerStackController extends BaseController
             JSONArray rewardSource = fetchAllItems("/rewards", rewardParams, access.token());
             JSONArray rewards = filterItems(rewardSource, scope, subId, minCreated, maxCreated,
                     access.fallbackSubId());
+            rewards.removeIf(item -> item instanceof JSONObject reward
+                    && isExcludedHighValueAdvertiserReward(reward));
 
             if (StringUtils.hasText(transactionId))
             {
@@ -334,6 +340,9 @@ public class PartnerStackController extends BaseController
                 access.fallbackSubId());
         rewards.removeIf(item -> !(item instanceof JSONObject reward)
                 || !selectedCustomerKeys.contains(extractCustomerKey(reward)));
+        removeExcludedRewardTransactions(filtered, rewards);
+        rewards.removeIf(item -> item instanceof JSONObject reward
+                && isExcludedHighValueAdvertiserReward(reward));
         Map<String, String> rewardStatuses = transactionRewardStatuses(rewards);
 
         List<ActionRecordRow> rows = new ArrayList<>();
@@ -645,7 +654,28 @@ public class PartnerStackController extends BaseController
         }
         putIfPresent(params, "currency", currency);
         putIfPresent(params, "payment_status", paymentStatus);
-        return this.proxyList("/rewards", params, access);
+        AjaxResult result = this.proxyList("/rewards", params, access);
+        if (result.isSuccess())
+        {
+            filterExcludedRewards(result);
+        }
+        return result;
+    }
+
+    private void filterExcludedRewards(AjaxResult result)
+    {
+        Object body = result.get(AjaxResult.DATA_TAG);
+        if (!(body instanceof JSONObject container))
+        {
+            return;
+        }
+        JSONObject data = container.getJSONObject("data");
+        JSONArray items = data == null ? null : data.getJSONArray("items");
+        if (items != null)
+        {
+            items.removeIf(item -> item instanceof JSONObject reward
+                    && isExcludedHighValueAdvertiserReward(reward));
+        }
     }
 
     private AjaxResult proxyList(String path, Map<String, Object> params, PartnerAccess access)
@@ -1436,6 +1466,10 @@ public class PartnerStackController extends BaseController
         for (Object item : rewards)
         {
             JSONObject reward = (JSONObject) item;
+            if (isExcludedHighValueAdvertiserReward(reward))
+            {
+                continue;
+            }
             JSONObject row = dashboardRow(rows, reward, fallbackSubId);
             String customerKey = extractCustomerKey(reward);
             if (StringUtils.hasText(customerKey) && signupCustomers.add(customerKey))
@@ -1469,11 +1503,6 @@ public class PartnerStackController extends BaseController
             {
                 row.put("paidSignups", row.getLongValue("paidSignups") + 1);
             }
-            JSONObject transaction = reward.getJSONObject("transaction");
-            BigDecimal spend = transaction == null ? BigDecimal.ZERO : cents(transaction.containsKey("amount_usd")
-                    ? transaction.get("amount_usd") : transaction.get("amount"));
-            transactionAmount = transactionAmount.add(spend);
-            row.put("transactionAmount", money(row.getBigDecimal("transactionAmount").add(spend)));
         }
 
         for (Object item : rewards)
@@ -1485,10 +1514,13 @@ public class PartnerStackController extends BaseController
             }
             JSONObject row = dashboardRow(rows, reward, fallbackSubId);
             BigDecimal commission = cents(reward.get("amount"));
+            BigDecimal spend = commission.multiply(STANDARD_COMMISSION_SPEND_MULTIPLIER);
             rewardAmount = rewardAmount.add(commission);
+            transactionAmount = transactionAmount.add(spend);
             rewardCount++;
             row.put("rewards", row.getLongValue("rewards") + 1);
             row.put("rewardAmount", money(row.getBigDecimal("rewardAmount").add(commission)));
+            row.put("transactionAmount", money(row.getBigDecimal("transactionAmount").add(spend)));
         }
 
         List<JSONObject> sortedRows = aggregateBySubId(rows.values(), fallbackSubId);
@@ -1532,7 +1564,8 @@ public class PartnerStackController extends BaseController
             JSONObject reward = (JSONObject) item;
             JSONObject source = reward.getJSONObject("source");
             String sourceType = source == null ? null : source.getString("type");
-            if ("transaction".equalsIgnoreCase(StringUtils.trimWhitespace(sourceType)))
+            if ("transaction".equalsIgnoreCase(StringUtils.trimWhitespace(sourceType))
+                    && !isExcludedHighValueAdvertiserReward(reward))
             {
                 result.add(reward);
             }
@@ -1549,7 +1582,7 @@ public class PartnerStackController extends BaseController
 
     static boolean isValidCommissionReward(JSONObject reward)
     {
-        if (!isTransactionReward(reward))
+        if (!isTransactionReward(reward) || isExcludedHighValueAdvertiserReward(reward))
         {
             return false;
         }
@@ -1560,6 +1593,47 @@ public class PartnerStackController extends BaseController
         }
         JSONObject transaction = reward.getJSONObject("transaction");
         return transaction != null && !transaction.getBooleanValue("archived");
+    }
+
+    static boolean isExcludedHighValueAdvertiserReward(JSONObject reward)
+    {
+        if (reward == null || !StringUtils.hasText(reward.getString("description")))
+        {
+            return false;
+        }
+        String normalizedDescription = reward.getString("description")
+                .trim().toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", " ");
+        return EXCLUDED_HIGH_VALUE_ADVERTISER_REWARD_DESCRIPTIONS.stream()
+                .anyMatch(normalizedDescription::contains);
+    }
+
+    static Set<String> excludedRewardSourceKeys(JSONArray rewards)
+    {
+        Set<String> result = new HashSet<>();
+        for (Object item : rewards)
+        {
+            if (!(item instanceof JSONObject reward) || !isExcludedHighValueAdvertiserReward(reward))
+            {
+                continue;
+            }
+            JSONObject source = reward.getJSONObject("source");
+            if (source != null && StringUtils.hasText(source.getString("key")))
+            {
+                result.add(source.getString("key"));
+            }
+        }
+        return result;
+    }
+
+    static void removeExcludedRewardTransactions(JSONArray transactions, JSONArray rewards)
+    {
+        Set<String> excludedSourceKeys = excludedRewardSourceKeys(rewards);
+        if (excludedSourceKeys.isEmpty())
+        {
+            return;
+        }
+        transactions.removeIf(item -> item instanceof JSONObject transaction
+                && excludedSourceKeys.contains(transaction.getString("key")));
     }
 
     static void addMissingSubIdRows(List<JSONObject> rows, Collection<String> visibleSubIds, String selectedSubId)

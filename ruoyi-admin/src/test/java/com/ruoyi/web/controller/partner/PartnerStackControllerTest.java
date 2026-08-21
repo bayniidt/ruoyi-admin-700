@@ -250,8 +250,55 @@ class PartnerStackControllerTest
         assertEquals(1, summary.getIntValue("paidSignups"));
         assertEquals(3, summary.getIntValue("actions"));
         assertEquals(1, summary.getIntValue("validActions"));
-        assertEquals(new BigDecimal("5.00"), summary.getBigDecimal("transactionAmount"));
+        assertEquals(new BigDecimal("7.50"), summary.getBigDecimal("transactionAmount"));
         assertEquals(new BigDecimal("1.50"), summary.getBigDecimal("rewardAmount"));
+    }
+
+    @Test
+    void excludesFixedHighValueAdvertiserRewardsFromDashboardAndPopupTransactions()
+    {
+        JSONObject sixtyDollarReward = reward("rwrd_60", "transaction", "tx_60", "cus_60", "paid", 6000,
+                30000, false);
+        sixtyDollarReward.put("description", "Member - Earn $60 for every new high value advertiser");
+        JSONObject fourHundredDollarReward = reward("rwrd_400", "transaction", "tx_400", "cus_400", "paid",
+                40000, 200000, false);
+        fourHundredDollarReward.put("description",
+                "Member - Earn $400 for every new high value advertiser");
+        JSONObject normalReward = reward("rwrd_normal", "transaction", "tx_normal", "cus_normal", "paid", 2000,
+                10000, false);
+        normalReward.put("description", "Member - 20% commission for first 28 days after cash active");
+        JSONArray rewards = JSONArray.of(sixtyDollarReward, fourHundredDollarReward, normalReward);
+
+        JSONObject dashboard = PartnerStackController.buildDashboard("partner", "fallback", Set.of(), null,
+                rewards);
+        JSONObject summary = dashboard.getJSONObject("summary");
+
+        assertEquals(1, summary.getIntValue("actions"));
+        assertEquals(new BigDecimal("100.00"), summary.getBigDecimal("transactionAmount"));
+        assertEquals(new BigDecimal("20.00"), summary.getBigDecimal("rewardAmount"));
+        JSONArray popupTransactions = JSONArray.of(
+                JSONObject.of("key", "tx_60"),
+                JSONObject.of("key", "tx_400"),
+                JSONObject.of("key", "tx_normal"));
+        PartnerStackController.removeExcludedRewardTransactions(popupTransactions, rewards);
+
+        assertEquals(List.of("tx_normal"), popupTransactions.stream()
+                .map(item -> ((JSONObject) item).getString("key")).toList());
+    }
+
+    @Test
+    void derivesEffectiveSpendFromEligibleTwentyPercentCommission()
+    {
+        JSONObject commissionReward = reward("rwrd_1", "transaction", "tx_1", "cus_1", "paid",
+                1503234, 7710468, false);
+        commissionReward.put("description", "Member - 20% commission for first 28 days after cash active");
+
+        JSONObject dashboard = PartnerStackController.buildDashboard("partner", "fallback", Set.of(), null,
+                JSONArray.of(commissionReward));
+        JSONObject summary = dashboard.getJSONObject("summary");
+
+        assertEquals(new BigDecimal("15032.34"), summary.getBigDecimal("rewardAmount"));
+        assertEquals(new BigDecimal("75161.70"), summary.getBigDecimal("transactionAmount"));
     }
 
     @Test
