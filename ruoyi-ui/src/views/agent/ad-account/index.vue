@@ -40,7 +40,7 @@
       <el-table :data="accountList" border v-loading="loading">
         <el-table-column prop="accountId" label="广告户ID" min-width="220">
           <template slot-scope="scope">
-            <el-button type="text" class="account-link" @click="openActionDialog(scope.row)">{{ scope.row.accountId }}</el-button>
+            <el-button type="text" class="account-link" @click="openActionDialog(scope.row, true)">{{ scope.row.accountId }}</el-button>
           </template>
         </el-table-column>
         <el-table-column prop="subId" label="SubId" min-width="150" align="center">
@@ -83,7 +83,9 @@
     </el-card>
 
     <el-dialog
-      :title="`SubId: ${actionDialog.subId} 的行动列表`"
+      :title="actionDialog.exactCustomerKey
+        ? `广告户ID: ${actionDialog.customerKey} 的行动列表`
+        : `SubId: ${actionDialog.subId} 的行动列表`"
       :visible.sync="actionDialog.visible"
       width="900px"
       append-to-body
@@ -99,7 +101,8 @@
           <el-input
             v-model.trim="actionDialog.customerKey"
             placeholder="搜索广告账户ID"
-            clearable
+            :clearable="!actionDialog.exactCustomerKey"
+            :disabled="actionDialog.exactCustomerKey"
             prefix-icon="el-icon-search"
             @keyup.enter.native="searchActionRecords"
             @clear="searchActionRecords"
@@ -199,6 +202,7 @@ export default {
         requestId: 0,
         subId: '',
         customerKey: '',
+        exactCustomerKey: false,
         dateRange: [],
         pageNum: 1,
         pageSize: 10,
@@ -299,11 +303,12 @@ export default {
       this.pagination.pageNum = 1
       this.fetchAccounts()
     },
-    async openActionDialog(row) {
+    async openActionDialog(row, exactCustomerKey = false) {
       if (!row.subId || row.subId === '-') return
       this.actionDialog.visible = true
       this.actionDialog.subId = row.subId
-      this.actionDialog.customerKey = ''
+      this.actionDialog.customerKey = exactCustomerKey ? row.accountId : ''
+      this.actionDialog.exactCustomerKey = exactCustomerKey
       this.actionDialog.dateRange = [...(this.filters.dateRange || [])]
       this.actionDialog.pageNum = 1
       await this.fetchActionRecords()
@@ -312,7 +317,8 @@ export default {
       const params = {
         subId: this.actionDialog.subId,
         ...buildDateRangeParams(this.actionDialog.dateRange),
-        customerKey: this.actionDialog.customerKey || undefined
+        customerKey: this.actionDialog.customerKey || undefined,
+        exactCustomerKey: this.actionDialog.exactCustomerKey || undefined
       }
       if (includePagination) {
         params.pageNum = this.actionDialog.pageNum
@@ -364,6 +370,7 @@ export default {
         exporting: false,
         subId: '',
         customerKey: '',
+        exactCustomerKey: false,
         dateRange: [],
         pageNum: 1,
         total: 0,

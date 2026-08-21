@@ -227,6 +227,7 @@ public class PartnerStackController extends BaseController
             @RequestParam(required = false) Long minCreated,
             @RequestParam(required = false) Long maxCreated,
             @RequestParam(required = false) String customerKey,
+            @RequestParam(required = false, defaultValue = "false") Boolean exactCustomerKey,
             @RequestParam(required = false, defaultValue = "1") Integer pageNum,
             @RequestParam(required = false, defaultValue = "10") Integer pageSize)
     {
@@ -237,7 +238,8 @@ public class PartnerStackController extends BaseController
         }
         try
         {
-            List<ActionRecordRow> rows = loadActionRecords(subId, minCreated, maxCreated, customerKey);
+            List<ActionRecordRow> rows = loadActionRecords(subId, minCreated, maxCreated, customerKey,
+                    Boolean.TRUE.equals(exactCustomerKey));
             int safePageNum = pageNum == null || pageNum < 1 ? 1 : pageNum;
             int safePageSize = pageSize == null || pageSize < 1 ? 10 : Math.min(pageSize, 100);
             List<ActionRecordRow> pagedRows = pageRows(rows, safePageNum, safePageSize);
@@ -264,7 +266,8 @@ public class PartnerStackController extends BaseController
             @RequestParam String subId,
             @RequestParam(required = false) Long minCreated,
             @RequestParam(required = false) Long maxCreated,
-            @RequestParam(required = false) String customerKey)
+            @RequestParam(required = false) String customerKey,
+            @RequestParam(required = false, defaultValue = "false") Boolean exactCustomerKey)
     {
         String validationMessage = validateActionRecordRequest(subId, minCreated, maxCreated);
         if (validationMessage != null)
@@ -273,7 +276,8 @@ public class PartnerStackController extends BaseController
         }
         try
         {
-            List<ActionRecordRow> rows = loadActionRecords(subId, minCreated, maxCreated, customerKey);
+            List<ActionRecordRow> rows = loadActionRecords(subId, minCreated, maxCreated, customerKey,
+                    Boolean.TRUE.equals(exactCustomerKey));
             ExcelUtil<ActionRecordRow> util = new ExcelUtil<>(ActionRecordRow.class);
             util.exportExcel(response, rows, "【交易信息】数据");
         }
@@ -298,7 +302,7 @@ public class PartnerStackController extends BaseController
     }
 
     private List<ActionRecordRow> loadActionRecords(String subId, Long minCreated, Long maxCreated,
-            String customerKey)
+            String customerKey, boolean exactCustomerKey)
     {
         PartnerAccess access = scopedPartnerAccess();
         Scope scope = access.scope();
@@ -354,8 +358,7 @@ public class PartnerStackController extends BaseController
             }
             ActionRecordRow row = toActionRecordRow(transaction, subId, access.fallbackSubId(),
                     rewardStatuses.get(transaction.getString("key")));
-            if (StringUtils.hasText(customerKey)
-                    && !containsTextIgnoreCase(row.getCustomerKey(), customerKey))
+            if (!matchesActionCustomerKey(row.getCustomerKey(), customerKey, exactCustomerKey))
             {
                 continue;
             }
@@ -364,6 +367,21 @@ public class PartnerStackController extends BaseController
         rows.sort(Comparator.comparing(ActionRecordRow::getCreatedAt,
                 Comparator.nullsLast(Comparator.reverseOrder())));
         return rows;
+    }
+
+    static boolean matchesActionCustomerKey(String actualCustomerKey, String requestedCustomerKey,
+            boolean exactMatch)
+    {
+        if (!StringUtils.hasText(requestedCustomerKey))
+        {
+            return true;
+        }
+        if (exactMatch)
+        {
+            return StringUtils.hasText(actualCustomerKey)
+                    && actualCustomerKey.trim().equalsIgnoreCase(requestedCustomerKey.trim());
+        }
+        return containsTextIgnoreCase(actualCustomerKey, requestedCustomerKey);
     }
 
     private ActionRecordRow toActionRecordRow(JSONObject transaction, String selectedSubId, String fallbackSubId,

@@ -302,6 +302,18 @@ class PartnerStackControllerTest
     }
 
     @Test
+    void matchesOnlyTheClickedAdAccountWhenExactFilteringIsRequested()
+    {
+        String clickedAccountId = "7669722542202109973";
+
+        assertTrue(PartnerStackController.matchesActionCustomerKey(clickedAccountId, clickedAccountId, true));
+        assertFalse(PartnerStackController.matchesActionCustomerKey(
+                "17669722542202109973", clickedAccountId, true));
+        assertTrue(PartnerStackController.matchesActionCustomerKey(
+                "17669722542202109973", clickedAccountId, false));
+    }
+
+    @Test
     void zeroValueRowsRespectSelectedSubIdFilter()
     {
         List<JSONObject> rows = new ArrayList<>();
