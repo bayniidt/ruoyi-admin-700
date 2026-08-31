@@ -250,8 +250,8 @@ class PartnerStackControllerTest
         assertEquals(1, summary.getIntValue("paidSignups"));
         assertEquals(3, summary.getIntValue("actions"));
         assertEquals(1, summary.getIntValue("validActions"));
-        assertEquals(new BigDecimal("7.50"), summary.getBigDecimal("transactionAmount"));
-        assertEquals(new BigDecimal("1.50"), summary.getBigDecimal("rewardAmount"));
+        assertEquals(new BigDecimal("10.00"), summary.getBigDecimal("transactionAmount"));
+        assertEquals(new BigDecimal("2.00"), summary.getBigDecimal("rewardAmount"));
     }
 
     @Test
@@ -287,7 +287,7 @@ class PartnerStackControllerTest
     }
 
     @Test
-    void derivesEffectiveSpendFromEligibleTwentyPercentCommission()
+    void usesPartnerStackTransactionSpendForConfiguredCommission()
     {
         JSONObject commissionReward = reward("rwrd_1", "transaction", "tx_1", "cus_1", "paid",
                 1503234, 7710468, false);
@@ -297,8 +297,37 @@ class PartnerStackControllerTest
                 JSONArray.of(commissionReward));
         JSONObject summary = dashboard.getJSONObject("summary");
 
-        assertEquals(new BigDecimal("15032.34"), summary.getBigDecimal("rewardAmount"));
-        assertEquals(new BigDecimal("75161.70"), summary.getBigDecimal("transactionAmount"));
+        assertEquals(new BigDecimal("15420.94"), summary.getBigDecimal("rewardAmount"));
+        assertEquals(new BigDecimal("77104.68"), summary.getBigDecimal("transactionAmount"));
+    }
+
+    @Test
+    void calculatesDownlineCommissionFromConfiguredRate()
+    {
+        JSONObject commissionReward = reward("rwrd_1", "transaction", "tx_1", "cus_1", "paid",
+                2000, 10000, false);
+
+        JSONObject dashboard = PartnerStackController.buildDashboard("partner", "fallback", Set.of(), null,
+                JSONArray.of(commissionReward), Map.of("cus_1", new BigDecimal("10")));
+        JSONObject summary = dashboard.getJSONObject("summary");
+
+        assertEquals(new BigDecimal("100.00"), summary.getBigDecimal("transactionAmount"));
+        assertEquals(new BigDecimal("10.00"), summary.getBigDecimal("rewardAmount"));
+    }
+
+    @Test
+    void appliesEachAgentConfiguredRateToMainDashboardRows()
+    {
+        JSONObject tenPercentReward = reward("rwrd_10", "transaction", "tx_10", "cus_10", "paid",
+                2000, 10000, false);
+        JSONObject fifteenPercentReward = reward("rwrd_15", "transaction", "tx_15", "cus_15", "paid",
+                3000, 10000, false);
+
+        JSONObject dashboard = PartnerStackController.buildDashboard("partner", "fallback", Set.of(), null,
+                JSONArray.of(tenPercentReward, fifteenPercentReward),
+                Map.of("cus_10", new BigDecimal("10"), "cus_15", new BigDecimal("15")));
+
+        assertEquals(new BigDecimal("25.00"), dashboard.getJSONObject("summary").getBigDecimal("rewardAmount"));
     }
 
     @Test

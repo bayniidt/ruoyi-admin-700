@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.math.BigDecimal;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +12,7 @@ import java.util.Set;
 import org.springframework.stereotype.Service;
 import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.system.domain.AgentClient;
+import com.ruoyi.system.domain.AgentSubId;
 import com.ruoyi.system.mapper.AgentClientMapper;
 import com.ruoyi.system.mapper.AgentSubIdMapper;
 
@@ -87,6 +89,43 @@ public class AgentDataScopeService
         Set<String> subIds = new LinkedHashSet<>();
         addNonBlank(subIds, agentSubIdMapper.selectSubIdsByUserIds(userIds));
         return subIds;
+    }
+
+    /** Commission rates keyed by the PartnerStack customer key and owned SubId. */
+    public Map<String, BigDecimal> selectCommissionRatesByUserIds(Collection<Long> userIds)
+    {
+        if (userIds == null || userIds.isEmpty())
+        {
+            return Collections.emptyMap();
+        }
+        Map<Long, BigDecimal> ratesByUserId = new HashMap<>();
+        Map<String, BigDecimal> ratesByAttributionKey = new HashMap<>();
+        for (AgentClient agent : agentClientMapper.selectAgentList(userIds, null))
+        {
+            if (agent == null || agent.getSysUserId() == null || agent.getCommissionRate() == null)
+            {
+                continue;
+            }
+            BigDecimal rate = agent.getCommissionRate();
+            ratesByUserId.put(agent.getSysUserId(), rate);
+            addRate(ratesByAttributionKey, agent.getPartnerCustomerKey(), rate);
+        }
+        for (AgentSubId subId : agentSubIdMapper.selectSubIdListByUserIds(userIds))
+        {
+            if (subId != null && subId.getCreatedBy() != null)
+            {
+                addRate(ratesByAttributionKey, subId.getSubid(), ratesByUserId.get(subId.getCreatedBy()));
+            }
+        }
+        return ratesByAttributionKey;
+    }
+
+    private void addRate(Map<String, BigDecimal> rates, String key, BigDecimal rate)
+    {
+        if (StringUtils.isNotBlank(key) && rate != null)
+        {
+            rates.put(key.trim().toLowerCase(java.util.Locale.ROOT), rate);
+        }
     }
 
     static Set<Long> collectSelfAndDescendants(Long userId, List<AgentClient> agents)

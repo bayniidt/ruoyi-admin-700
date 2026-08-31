@@ -64,7 +64,7 @@ public class PartnerStackController extends BaseController
     private static final long RESPONSE_CACHE_TTL_MILLIS = 30_000L;
     private static final long REWARD_STATUS_LOOKAHEAD_MILLIS = Duration.ofDays(7).toMillis();
     private static final List<String> DASHBOARD_SOURCES = List.of("rewards");
-    private static final BigDecimal STANDARD_COMMISSION_SPEND_MULTIPLIER = new BigDecimal("5");
+    private static final BigDecimal DEFAULT_COMMISSION_RATE = new BigDecimal("20");
     private static final List<String> EXCLUDED_HIGH_VALUE_ADVERTISER_REWARD_DESCRIPTIONS = List.of(
             "earn $60 for every new high value advertiser",
             "earn $400 for every new high value advertiser");
@@ -140,7 +140,7 @@ public class PartnerStackController extends BaseController
             }
 
             JSONObject result = buildDashboard(access.displayKey(), access.fallbackSubId(), access.visibleSubIds(),
-                    subId, rewards);
+                    subId, rewards, access.commissionRates());
             result.put("loadedSources", requestedSources);
             return success(result);
         }
@@ -733,11 +733,12 @@ public class PartnerStackController extends BaseController
             throw new ServiceException("当前用户未绑定 PartnerStack Key，请先在个人中心完成绑定");
         }
         String userKey = user.getPartnerStackKey().trim();
+        Set<Long> scopedUserIds = agentDataScopeService.selectSelfAndDescendantUserIds(user.getUserId());
         if (looksLikeAccessToken(userKey))
         {
             return new PartnerAccess(userKey, Scope.all(), maskSecret(userKey), user.getUserName(),
                     agentDataScopeService.selectSubIdsByUserIds(
-                            agentDataScopeService.selectSelfAndDescendantUserIds(user.getUserId())));
+                            scopedUserIds), agentDataScopeService.selectCommissionRatesByUserIds(scopedUserIds));
         }
         if (!StringUtils.hasText(platformToken))
         {
@@ -749,14 +750,16 @@ public class PartnerStackController extends BaseController
             Set<Long> visibleUserIds = new HashSet<>(agentDataScopeService.selectAllAgentUserIds());
             visibleUserIds.add(user.getUserId());
             return new PartnerAccess(platformToken.trim(), Scope.all(), userKey, user.getUserName(),
-                    agentDataScopeService.selectSubIdsByUserIds(visibleUserIds));
+                    agentDataScopeService.selectSubIdsByUserIds(visibleUserIds),
+                    agentDataScopeService.selectCommissionRatesByUserIds(visibleUserIds));
         }
-        Set<Long> visibleUserIds = agentDataScopeService.selectSelfAndDescendantUserIds(user.getUserId());
+        Set<Long> visibleUserIds = scopedUserIds;
         Set<String> attributionKeys = new HashSet<>(agentDataScopeService.selectPartnerAttributionKeys(visibleUserIds));
         attributionKeys.add(userKey);
         return new PartnerAccess(platformToken.trim(), Scope.from(attributionKeys),
                 String.join(",", attributionKeys), user.getUserName(),
-                agentDataScopeService.selectSubIdsByUserIds(visibleUserIds));
+                agentDataScopeService.selectSubIdsByUserIds(visibleUserIds),
+                agentDataScopeService.selectCommissionRatesByUserIds(visibleUserIds));
     }
 
     static boolean looksLikeAccessToken(String value)
@@ -1472,6 +1475,13 @@ public class PartnerStackController extends BaseController
     static JSONObject buildDashboard(String partnerStackKey, String fallbackSubId, Set<String> visibleSubIds,
             String selectedSubId, JSONArray rewards)
     {
+        return buildDashboard(partnerStackKey, fallbackSubId, visibleSubIds, selectedSubId, rewards,
+                Map.of());
+    }
+
+    static JSONObject buildDashboard(String partnerStackKey, String fallbackSubId, Set<String> visibleSubIds,
+            String selectedSubId, JSONArray rewards, Map<String, BigDecimal> commissionRates)
+    {
         Map<String, JSONObject> rows = new LinkedHashMap<>();
         Set<String> signupCustomers = new HashSet<>();
         Set<String> paidSignupCustomers = new HashSet<>();
@@ -1531,13 +1541,14 @@ public class PartnerStackController extends BaseController
                 continue;
             }
             JSONObject row = dashboardRow(rows, reward, fallbackSubId);
-            BigDecimal commission = cents(reward.get("amount"));
-            BigDecimal spend = commission.multiply(STANDARD_COMMISSION_SPEND_MULTIPLIER);
-            rewardAmount = rewardAmount.add(commission);
+            BigDecimal spend = rewardSpend(reward);
+            BigDecimal commissionRate = commissionRate(reward, fallbackSubId, commissionRates);
+            BigDecimal downlineCommission = spend.multiply(commissionRate).movePointLeft(2);
+            rewardAmount = rewardAmount.add(downlineCommission);
             transactionAmount = transactionAmount.add(spend);
             rewardCount++;
             row.put("rewards", row.getLongValue("rewards") + 1);
-            row.put("rewardAmount", money(row.getBigDecimal("rewardAmount").add(commission)));
+            row.put("rewardAmount", money(row.getBigDecimal("rewardAmount").add(downlineCommission)));
             row.put("transactionAmount", money(row.getBigDecimal("transactionAmount").add(spend)));
         }
 
@@ -1611,6 +1622,47 @@ public class PartnerStackController extends BaseController
         }
         JSONObject transaction = reward.getJSONObject("transaction");
         return transaction != null && !transaction.getBooleanValue("archived");
+    }
+
+    private static BigDecimal rewardSpend(JSONObject reward)
+    {
+        JSONObject transaction = reward.getJSONObject("transaction");
+        if (transaction == null)
+        {
+            return BigDecimal.ZERO;
+        }
+        Object amount = transaction.containsKey("amount_usd")
+                ? transaction.get("amount_usd") : transaction.get("amount");
+        return cents(amount);
+    }
+
+    private static BigDecimal commissionRate(JSONObject reward, String fallbackSubId,
+            Map<String, BigDecimal> commissionRates)
+    {
+        if (commissionRates != null)
+        {
+            BigDecimal rate = commissionRates.get(normalizedKey(extractCustomerKey(reward)));
+            if (rate != null)
+            {
+                return rate;
+            }
+            rate = commissionRates.get(normalizedKey(firstSubId(reward)));
+            if (rate != null)
+            {
+                return rate;
+            }
+            rate = commissionRates.get(normalizedKey(fallbackSubId));
+            if (rate != null)
+            {
+                return rate;
+            }
+        }
+        return DEFAULT_COMMISSION_RATE;
+    }
+
+    private static String normalizedKey(String value)
+    {
+        return value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     static boolean isExcludedHighValueAdvertiserReward(JSONObject reward)
@@ -1923,7 +1975,7 @@ public class PartnerStackController extends BaseController
     }
 
     private record PartnerAccess(String token, Scope scope, String displayKey, String fallbackSubId,
-            Set<String> visibleSubIds)
+            Set<String> visibleSubIds, Map<String, BigDecimal> commissionRates)
     {
     }
 
