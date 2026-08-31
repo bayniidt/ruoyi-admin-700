@@ -738,7 +738,8 @@ public class PartnerStackController extends BaseController
         {
             return new PartnerAccess(userKey, Scope.all(), maskSecret(userKey), user.getUserName(),
                     agentDataScopeService.selectSubIdsByUserIds(
-                            scopedUserIds), agentDataScopeService.selectCommissionRatesByUserIds(scopedUserIds));
+                            scopedUserIds), SecurityUtils.isAdmin() ? null
+                                    : agentDataScopeService.selectCommissionRatesByUserIds(scopedUserIds));
         }
         if (!StringUtils.hasText(platformToken))
         {
@@ -751,7 +752,7 @@ public class PartnerStackController extends BaseController
             visibleUserIds.add(user.getUserId());
             return new PartnerAccess(platformToken.trim(), Scope.all(), userKey, user.getUserName(),
                     agentDataScopeService.selectSubIdsByUserIds(visibleUserIds),
-                    agentDataScopeService.selectCommissionRatesByUserIds(visibleUserIds));
+                    null);
         }
         Set<Long> visibleUserIds = scopedUserIds;
         Set<String> attributionKeys = new HashSet<>(agentDataScopeService.selectPartnerAttributionKeys(visibleUserIds));
@@ -1541,9 +1542,12 @@ public class PartnerStackController extends BaseController
                 continue;
             }
             JSONObject row = dashboardRow(rows, reward, fallbackSubId);
-            BigDecimal spend = rewardSpend(reward);
-            BigDecimal commissionRate = commissionRate(reward, fallbackSubId, commissionRates);
-            BigDecimal downlineCommission = spend.multiply(commissionRate).movePointLeft(2);
+            BigDecimal partnerStackCommission = cents(reward.get("amount"));
+            BigDecimal spend = commissionRates == null
+                    ? partnerStackCommission.multiply(new BigDecimal("5")) : rewardSpend(reward);
+            BigDecimal downlineCommission = commissionRates == null
+                    ? partnerStackCommission
+                    : spend.multiply(commissionRate(reward, fallbackSubId, commissionRates)).movePointLeft(2);
             rewardAmount = rewardAmount.add(downlineCommission);
             transactionAmount = transactionAmount.add(spend);
             rewardCount++;

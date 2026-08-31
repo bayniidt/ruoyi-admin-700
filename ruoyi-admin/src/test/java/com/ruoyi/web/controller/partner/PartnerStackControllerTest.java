@@ -331,6 +331,19 @@ class PartnerStackControllerTest
     }
 
     @Test
+    void keepsPartnerStackCommissionForAdminDashboardMode()
+    {
+        JSONObject reward = reward("rwrd_admin", "transaction", "tx_admin", "cus_admin", "paid",
+                2000, 12000, false);
+
+        JSONObject dashboard = PartnerStackController.buildDashboard("partner", "fallback", Set.of(), null,
+                JSONArray.of(reward), null);
+
+        assertEquals(new BigDecimal("100.00"), dashboard.getJSONObject("summary").getBigDecimal("transactionAmount"));
+        assertEquals(new BigDecimal("20.00"), dashboard.getJSONObject("summary").getBigDecimal("rewardAmount"));
+    }
+
+    @Test
     void matchesOnlyTheClickedAdAccountWhenExactFilteringIsRequested()
     {
         String clickedAccountId = "7669722542202109973";
