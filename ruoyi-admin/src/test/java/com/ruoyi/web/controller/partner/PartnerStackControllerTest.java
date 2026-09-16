@@ -381,7 +381,7 @@ class PartnerStackControllerTest
     }
 
     @Test
-    void mapsTransactionKeyAndActualRewardStatusLikeReferenceExport()
+    void mapsTransactionKeyAndLatestCommissionStatusLikePartnerStack()
     {
         JSONObject transaction = JSONObject.of(
                 "key", "7669986365668474896_101_1_20260818",
@@ -392,16 +392,43 @@ class PartnerStackControllerTest
                 "source", JSONObject.of("type", "transaction", "key", transaction.getString("key")));
         JSONObject approved = JSONObject.of(
                 "reward_status", "approved",
+                "payment_status", "available",
                 "updated_at", 200L,
                 "source", JSONObject.of("type", "transaction", "key", transaction.getString("key")));
 
         assertEquals("7669986365668474896", PartnerStackController.transactionCustomerKey(transaction));
-        assertEquals("approved", PartnerStackController.transactionRewardStatuses(
+        assertEquals("available", PartnerStackController.transactionRewardStatuses(
                 JSONArray.of(pending, approved)).get(transaction.getString("key")));
-        assertEquals("待审核", PartnerStackController.rewardStatusLabel("pending"));
-        assertEquals("已通过", PartnerStackController.rewardStatusLabel("approved"));
-        assertEquals("待审核", PartnerStackController.rewardStatusLabel("paid"));
-        assertEquals("待审核", PartnerStackController.rewardStatusLabel(null));
+    }
+
+    @Test
+    void mapsEveryPartnerStackCommissionStatus()
+    {
+        Map<String, String> expected = Map.ofEntries(
+                Map.entry("scheduled", "已安排"),
+                Map.entry("pending", "待审批"),
+                Map.entry("approved", "已批准并待付款"),
+                Map.entry("declined", "已拒绝"),
+                Map.entry("hold", "搁置"),
+                Map.entry("available", "可提现"),
+                Map.entry("withdrawn", "已提现"),
+                Map.entry("paid_externally", "已在外部支付"),
+                Map.entry("expired", "已过期"),
+                Map.entry("failed", "付款失败，可重试"),
+                Map.entry("merging", "付款合并中"),
+                Map.entry("refunded", "已由供应商退款"));
+
+        expected.forEach((status, label) ->
+                assertEquals(label, PartnerStackController.rewardStatusLabel(status)));
+        List<String> labelsByCode = List.of("已安排", "待审批", "已批准并待付款", "已拒绝", "搁置", "可提现",
+                "已提现", "已在外部支付", "已过期", "付款失败，可重试", "付款合并中", "已由供应商退款");
+        for (int status = 1; status <= labelsByCode.size(); status++)
+        {
+            assertEquals(labelsByCode.get(status - 1),
+                    PartnerStackController.rewardStatusLabel(String.valueOf(status)));
+        }
+        assertEquals("待审批", PartnerStackController.rewardStatusLabel(null));
+        assertEquals("custom_status", PartnerStackController.rewardStatusLabel("custom_status"));
     }
 
     @Test

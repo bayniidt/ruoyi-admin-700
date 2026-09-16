@@ -456,21 +456,42 @@ public class PartnerStackController extends BaseController
             }
         }
         Map<String, String> result = new LinkedHashMap<>();
-        latestRewards.forEach((key, reward) -> result.put(key, reward.getString("reward_status")));
+        latestRewards.forEach((key, reward) -> result.put(key, commissionStatus(reward)));
         return result;
+    }
+
+    private static String commissionStatus(JSONObject reward)
+    {
+        String paymentStatus = reward == null ? null : reward.getString("payment_status");
+        if (StringUtils.hasText(paymentStatus))
+        {
+            return paymentStatus;
+        }
+        return reward == null ? null : reward.getString("reward_status");
     }
 
     static String rewardStatusLabel(String status)
     {
         if (!StringUtils.hasText(status))
         {
-            return "待审核";
+            return "待审批";
         }
-        return switch (status.trim().toLowerCase(java.util.Locale.ROOT))
+        String normalizedStatus = status.trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (normalizedStatus)
         {
-            case "pending" -> "待审核";
-            case "approved" -> "已通过";
-            default -> "待审核";
+            case "1", "scheduled" -> "已安排";
+            case "2", "pending" -> "待审批";
+            case "3", "approved", "in_transit" -> "已批准并待付款";
+            case "4", "declined" -> "已拒绝";
+            case "5", "hold" -> "搁置";
+            case "6", "available" -> "可提现";
+            case "7", "withdrawn", "paid" -> "已提现";
+            case "8", "paid_externally" -> "已在外部支付";
+            case "9", "expired" -> "已过期";
+            case "10", "failed" -> "付款失败，可重试";
+            case "11", "merging" -> "付款合并中";
+            case "12", "refunded", "refunded_by_vendor", "vendor_refunded" -> "已由供应商退款";
+            default -> status.trim();
         };
     }
 

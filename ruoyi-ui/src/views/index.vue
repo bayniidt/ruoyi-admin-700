@@ -145,7 +145,7 @@
           <template slot-scope="scope">${{ formatMoney(scope.row.amountUsd) }}</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="交易时间" width="180" />
-        <el-table-column prop="status" label="状态" width="110" align="center">
+        <el-table-column prop="status" label="状态" width="160" align="center">
           <template slot-scope="scope">
             <el-tag :type="actionStatusType(actionStatusLabel(scope.row.status))" effect="plain">
               {{ actionStatusLabel(scope.row.status) }}
@@ -430,12 +430,22 @@ export default {
     },
     actionStatusType(status) {
       return {
-        待审核: 'warning',
-        已通过: 'success'
-      }[status] || 'warning'
+        已安排: 'info',
+        待审批: 'warning',
+        已批准并待付款: 'warning',
+        已拒绝: 'danger',
+        搁置: 'info',
+        可提现: 'success',
+        已提现: 'success',
+        已在外部支付: 'success',
+        已过期: 'info',
+        '付款失败，可重试': 'danger',
+        付款合并中: 'info',
+        已由供应商退款: 'info'
+      }[status] || 'info'
     },
     actionStatusLabel(status) {
-      return status === '已通过' ? '已通过' : '待审核'
+      return status || '待审批'
     },
     formatMoney(value) {
       return Number(value || 0).toFixed(2)
