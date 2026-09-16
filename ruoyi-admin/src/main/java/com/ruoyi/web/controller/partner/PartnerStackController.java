@@ -450,7 +450,9 @@ public class PartnerStackController extends BaseController
             }
             String transactionKey = source.getString("key");
             JSONObject current = latestRewards.get(transactionKey);
-            if (current == null || reward.getLongValue("updated_at") > current.getLongValue("updated_at"))
+            if (current == null || (!isApprovedReward(current)
+                    && (isApprovedReward(reward)
+                            || reward.getLongValue("updated_at") > current.getLongValue("updated_at"))))
             {
                 latestRewards.put(transactionKey, reward);
             }
@@ -462,12 +464,23 @@ public class PartnerStackController extends BaseController
 
     private static String commissionStatus(JSONObject reward)
     {
+        if (isApprovedReward(reward))
+        {
+            return "approved";
+        }
         String paymentStatus = reward == null ? null : reward.getString("payment_status");
         if (StringUtils.hasText(paymentStatus))
         {
             return paymentStatus;
         }
         return reward == null ? null : reward.getString("reward_status");
+    }
+
+    private static boolean isApprovedReward(JSONObject reward)
+    {
+        String rewardStatus = reward == null ? null : reward.getString("reward_status");
+        return StringUtils.hasText(rewardStatus)
+                && ("approved".equalsIgnoreCase(rewardStatus.trim()) || "3".equals(rewardStatus.trim()));
     }
 
     static String rewardStatusLabel(String status)

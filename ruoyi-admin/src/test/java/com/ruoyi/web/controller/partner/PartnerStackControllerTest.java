@@ -395,10 +395,15 @@ class PartnerStackControllerTest
                 "payment_status", "available",
                 "updated_at", 200L,
                 "source", JSONObject.of("type", "transaction", "key", transaction.getString("key")));
+        JSONObject failedAfterApproval = JSONObject.of(
+                "reward_status", "paid",
+                "payment_status", "failed",
+                "updated_at", 300L,
+                "source", JSONObject.of("type", "transaction", "key", transaction.getString("key")));
 
         assertEquals("7669986365668474896", PartnerStackController.transactionCustomerKey(transaction));
-        assertEquals("available", PartnerStackController.transactionRewardStatuses(
-                JSONArray.of(pending, approved)).get(transaction.getString("key")));
+        assertEquals("approved", PartnerStackController.transactionRewardStatuses(
+                JSONArray.of(pending, approved, failedAfterApproval)).get(transaction.getString("key")));
     }
 
     @Test
