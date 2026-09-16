@@ -442,13 +442,11 @@ public class PartnerStackController extends BaseController
             {
                 continue;
             }
-            JSONObject source = reward.getJSONObject("source");
-            if (source == null || !"transaction".equalsIgnoreCase(source.getString("type"))
-                    || !StringUtils.hasText(source.getString("key")))
+            String transactionKey = rewardTransactionKey(reward);
+            if (!StringUtils.hasText(transactionKey))
             {
                 continue;
             }
-            String transactionKey = source.getString("key");
             JSONObject current = latestRewards.get(transactionKey);
             if (current == null || (!isApprovedReward(current)
                     && (isApprovedReward(reward)
@@ -462,6 +460,26 @@ public class PartnerStackController extends BaseController
         return result;
     }
 
+    private static String rewardTransactionKey(JSONObject reward)
+    {
+        if (reward == null)
+        {
+            return null;
+        }
+        if ("transaction".equalsIgnoreCase(reward.getString("target_type"))
+                && StringUtils.hasText(reward.getString("target_key")))
+        {
+            return reward.getString("target_key");
+        }
+        JSONObject source = reward.getJSONObject("source");
+        if (source != null && "transaction".equalsIgnoreCase(source.getString("type"))
+                && StringUtils.hasText(source.getString("key")))
+        {
+            return source.getString("key");
+        }
+        return null;
+    }
+
     private static String commissionStatus(JSONObject reward)
     {
         if (isApprovedReward(reward))
@@ -473,14 +491,26 @@ public class PartnerStackController extends BaseController
         {
             return paymentStatus;
         }
-        return reward == null ? null : reward.getString("reward_status");
+        String rewardStatus = reward == null ? null : reward.getString("reward_status");
+        return StringUtils.hasText(rewardStatus) ? rewardStatus : reward == null ? null : reward.getString("status");
     }
 
     private static boolean isApprovedReward(JSONObject reward)
     {
-        String rewardStatus = reward == null ? null : reward.getString("reward_status");
-        return StringUtils.hasText(rewardStatus)
-                && ("approved".equalsIgnoreCase(rewardStatus.trim()) || "3".equals(rewardStatus.trim()));
+        if (reward == null)
+        {
+            return false;
+        }
+        return Boolean.TRUE.equals(reward.getBoolean("approved"))
+                || isApprovedStatus(reward.getString("payment_status"))
+                || isApprovedStatus(reward.getString("reward_status"))
+                || isApprovedStatus(reward.getString("status"));
+    }
+
+    private static boolean isApprovedStatus(String status)
+    {
+        return StringUtils.hasText(status)
+                && ("approved".equalsIgnoreCase(status.trim()) || "3".equals(status.trim()));
     }
 
     static String rewardStatusLabel(String status)

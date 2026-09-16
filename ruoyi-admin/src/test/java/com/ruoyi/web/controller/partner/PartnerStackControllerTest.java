@@ -407,6 +407,28 @@ class PartnerStackControllerTest
     }
 
     @Test
+    void mapsCurrentPartnerStackRewardShapeAndKeepsApprovedStatus()
+    {
+        String transactionKey = "7660407238843760658_101_1_20260731";
+        JSONObject approved = JSONObject.of(
+                "payment_status", "approved",
+                "status", "paid",
+                "approved", true,
+                "updated_at", 200L,
+                "target_type", "transaction",
+                "target_key", transactionKey);
+        JSONObject failedAfterApproval = JSONObject.of(
+                "payment_status", "failed",
+                "approved", false,
+                "updated_at", 300L,
+                "target_type", "transaction",
+                "target_key", transactionKey);
+
+        assertEquals("approved", PartnerStackController.transactionRewardStatuses(
+                JSONArray.of(approved, failedAfterApproval)).get(transactionKey));
+    }
+
+    @Test
     void mapsEveryPartnerStackCommissionStatus()
     {
         Map<String, String> expected = Map.ofEntries(
